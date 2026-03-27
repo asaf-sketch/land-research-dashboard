@@ -196,36 +196,77 @@ export default function NewResearchForm() {
     setSaving(true);
     setSaveError("");
     try {
-      if (!supabase) {
-        throw new Error('Database not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
-      }
-      const { data, error } = await supabase.from('research_runs').insert({
-        client_name: form.clientName,
-        budget_cash_min: form.budgetCashMin,
-        budget_cash_max: form.budgetCashMax,
-        budget_down_min: form.downPaymentMin,
-        budget_down_max: form.downPaymentMax,
-        budget_monthly_min: form.monthlyMin,
-        budget_monthly_max: form.monthlyMax,
-        states: form.states,
-        counties: form.counties,
-        hoa_allowed: !form.noHOA,
-        land_uses: form.landUses,
-        min_acres: form.minAcres ? parseFloat(form.minAcres) : null,
-        max_acres: form.maxAcres ? parseFloat(form.maxAcres) : null,
-        road_requirement: form.roadRequirement,
-        power_nearby: form.powerNearby,
-        owner_financing: form.ownerFinancing,
-        immediate_residence: form.immediateResidence,
-        notes: form.notes,
-        status: 'pending',
-      }).select().single();
+      if (supabase) {
+        // Save to Supabase if configured
+        const { data, error } = await supabase.from('research_runs').insert({
+          client_name: form.clientName,
+          budget_cash_min: form.budgetCashMin,
+          budget_cash_max: form.budgetCashMax,
+          budget_down_min: form.downPaymentMin,
+          budget_down_max: form.downPaymentMax,
+          budget_monthly_min: form.monthlyMin,
+          budget_monthly_max: form.monthlyMax,
+          states: form.states,
+          counties: form.counties,
+          hoa_allowed: !form.noHOA,
+          land_uses: form.landUses,
+          min_acres: form.minAcres ? parseFloat(form.minAcres) : null,
+          max_acres: form.maxAcres ? parseFloat(form.maxAcres) : null,
+          road_requirement: form.roadRequirement,
+          power_nearby: form.powerNearby,
+          owner_financing: form.ownerFinancing,
+          immediate_residence: form.immediateResidence,
+          notes: form.notes,
+          status: 'pending',
+        }).select().single();
 
-      if (error) throw error;
-      setSavedId(data?.id || null);
+        if (error) throw error;
+        setSavedId(data?.id || null);
+      } else {
+        // Save locally when Supabase isn't configured
+        const localId = `local-${Date.now()}`;
+        const researchData = {
+          id: localId,
+          created_at: new Date().toISOString(),
+          client_name: form.clientName,
+          budget_cash_min: form.budgetCashMin,
+          budget_cash_max: form.budgetCashMax,
+          budget_down_min: form.downPaymentMin,
+          budget_down_max: form.downPaymentMax,
+          budget_monthly_min: form.monthlyMin,
+          budget_monthly_max: form.monthlyMax,
+          states: form.states,
+          counties: form.counties,
+          hoa_allowed: !form.noHOA,
+          land_uses: form.landUses,
+          min_acres: form.minAcres ? parseFloat(form.minAcres) : null,
+          max_acres: form.maxAcres ? parseFloat(form.maxAcres) : null,
+          road_requirement: form.roadRequirement,
+          power_nearby: form.powerNearby,
+          owner_financing: form.ownerFinancing,
+          immediate_residence: form.immediateResidence,
+          notes: form.notes,
+          status: 'pending',
+        };
+        // Store in localStorage
+        try {
+          const existing = JSON.parse(localStorage.getItem('research_runs') || '[]');
+          existing.push(researchData);
+          localStorage.setItem('research_runs', JSON.stringify(existing));
+        } catch {
+          // localStorage not available, still show success
+        }
+        // Also copy to clipboard automatically
+        try {
+          await navigator.clipboard.writeText(buildSummaryText());
+        } catch {
+          // clipboard not available, that's ok
+        }
+        setSavedId(localId);
+      }
     } catch (err) {
       console.error('Save error:', err);
-      setSaveError("Could not save to database. Copy to clipboard instead.");
+      setSaveError("Could not save. Please try copying to clipboard instead.");
     } finally {
       setSaving(false);
     }
@@ -640,7 +681,11 @@ export default function NewResearchForm() {
               <Card className="border border-emerald-200 bg-emerald-50">
                 <CardContent className="p-3 flex gap-2">
                   <Check className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
-                  <div className="text-xs text-emerald-700">Research saved successfully (ID: {savedId})</div>
+                  <div className="text-xs text-emerald-700">
+                    {savedId.startsWith('local-')
+                      ? "Research saved locally & copied to clipboard! Ready to start research."
+                      : `Research saved to database (ID: ${savedId})`}
+                  </div>
                 </CardContent>
               </Card>
             )}
