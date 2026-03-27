@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { properties, clients, countyData } from "./data/properties";
 import type { Property, Client } from "./data/properties";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,9 +14,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Slider } from "@/components/ui/slider";
 import {
   MapPin, DollarSign, Star, ArrowUpDown, Filter, BarChart3,
-  Scale, Home, Landmark, Tractor, AlertTriangle, ExternalLink, Search
+  Scale, Home, Landmark, Tractor, AlertTriangle, ExternalLink, Search,
+  Globe,
 } from "lucide-react";
 import NewResearchForm from "./NewResearchForm";
+import SearchEngineSettings from "./components/SearchEngineSettings";
+import { loadPropertyCache, type CachedProperty } from "./data/propertyCache";
+import { loadSearchEngines, generateSearchPlan } from "./data/searchEngines";
 
 function scoreColor(score: number) {
   if (score >= 90) return "bg-emerald-600 text-white";
@@ -195,6 +199,59 @@ function CompareView({ items, client }: { items: Property[]; client: Client }) {
   );
 }
 
+function EmptyResearchState({ client }: { client: Client }) {
+  const engines = loadSearchEngines().filter(e => e.enabled).sort((a, b) => a.priority - b.priority);
+  const criteria = {
+    states: client.notes?.match(/States: ([^\n.]+)/)?.[1]?.split(", ") || ["Missouri"],
+    counties: client.targetCounties,
+    budgetCashMin: client.budgetCashMin,
+    budgetCashMax: client.budgetCashMax,
+    acreageMin: client.acreageMin,
+    acreageMax: client.acreageMax,
+    ownerFinancing: client.mustOwnerFinancing,
+    rvMobileOk: client.mustLiveOnSite,
+    unrestricted: client.mustUnrestricted,
+  };
+  const searchPlan = generateSearchPlan(criteria);
+
+  return (
+    <div className="text-center py-8 text-gray-400">
+      <Search className="w-10 h-10 mx-auto mb-3 text-slate-300" />
+      <p className="text-base font-medium text-slate-500 mb-1">Research brief created for {client.name}</p>
+      <p className="text-sm text-gray-400 max-w-md mx-auto mb-4">
+        Waiting for market research. The search engine will scan {engines.length} sites with the criteria below.
+      </p>
+      <div className="text-xs text-left max-w-lg mx-auto bg-white rounded-lg border p-4 space-y-3">
+        <div className="space-y-1.5">
+          <div className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">Client Criteria</div>
+          <div><span className="text-gray-500">Budget:</span> <strong>{fmt(client.budgetCashMin)} – {fmt(client.budgetCashMax)}</strong></div>
+          <div><span className="text-gray-500">Monthly:</span> <strong>{client.budgetMonthly}</strong></div>
+          <div><span className="text-gray-500">Acreage:</span> <strong>{client.acreageMin}–{client.acreageMax} ac</strong></div>
+          <div><span className="text-gray-500">Target Counties:</span> <strong>{client.targetCounties.length > 0 ? client.targetCounties.join(", ") : "Any"}</strong></div>
+          <div><span className="text-gray-500">Purpose:</span> <strong>{client.purpose}</strong></div>
+        </div>
+        <Separator />
+        <div>
+          <div className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold mb-2">Search Plan — {searchPlan.length} searches across {engines.length} sites</div>
+          <div className="space-y-1 max-h-48 overflow-y-auto">
+            {searchPlan.slice(0, 20).map((plan, i) => (
+              <a key={i} href={plan.searchUrl} target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-2 p-1.5 rounded bg-slate-50 hover:bg-blue-50 transition-colors group">
+                <Badge variant="outline" className="text-[9px] min-w-[80px] text-center">{plan.engine.name}</Badge>
+                <span className="text-gray-500 truncate flex-1">{plan.county ? `${plan.county} Co, ${plan.state}` : plan.state}</span>
+                <ExternalLink className="w-3 h-3 text-gray-300 group-hover:text-blue-500" />
+              </a>
+            ))}
+            {searchPlan.length > 20 && (
+              <div className="text-center text-gray-400 text-[10px] py-1">+ {searchPlan.length - 20} more searches</div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [activeClient, setActiveClient] = useState<string>("Marietta");
   const [filterCounty, setFilterCounty] = useState<string>("all");
@@ -211,7 +268,27 @@ export default function App() {
     } catch { return []; }
   });
 
+  const [cachedProperties, setCachedProperties] = useState<CachedProperty[]>([]);
+
+  // Load cached properties on mount
+  useEffect(() => {
+    setCachedProperties(loadPropertyCache());
+  }, []);
+
   const allClients = [...clients, ...customClients];
+
+  // Merge hardcoded + cached properties, dedup by ID
+  const allProperties = useMemo(() => {
+    const merged: Property[] = [...properties];
+    const existingIds = new Set(properties.map(p => p.id));
+    for (const cp of cachedProperties) {
+      if (!existingIds.has(cp.id)) {
+        merged.push(cp);
+        existingIds.add(cp.id);
+      }
+    }
+    return merged;
+  }, [cachedProperties]);
 
   function handleNewResearch(newClient: Client) {
     const updated = [...customClients, newClient];
@@ -219,12 +296,14 @@ export default function App() {
     try { localStorage.setItem('custom_clients', JSON.stringify(updated)); } catch {}
     setActiveClient(newClient.name);
     setTab("client");
+    // Refresh cache after new research is created
+    setCachedProperties(loadPropertyCache());
   }
 
   const client = allClients.find(c => c.name === activeClient) || allClients[0];
 
   const filtered = useMemo(() => {
-    let items = properties.filter(p => p.client === activeClient);
+    let items = allProperties.filter(p => p.client === activeClient);
     if (filterCounty !== "all") items = items.filter(p => p.county === filterCounty);
     if (filterCat !== "all") items = items.filter(p => p.category === filterCat);
     if (filterUnrestricted) items = items.filter(p => p.unrestricted);
@@ -239,15 +318,15 @@ export default function App() {
     return items;
   }, [activeClient, filterCounty, filterCat, filterUnrestricted, filterFinancing, maxPrice, sortBy, client]);
 
-  const compareItems = properties.filter(p => compareIds.includes(p.id));
-  const counties = [...new Set(properties.filter(p => p.client === activeClient).map(p => p.county))];
+  const compareItems = allProperties.filter(p => compareIds.includes(p.id));
+  const counties = [...new Set(allProperties.filter(p => p.client === activeClient).map(p => p.county))];
 
   function toggleCompare(id: number) {
     setCompareIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   }
 
   const stats = useMemo(() => {
-    const items = properties.filter(p => p.client === activeClient);
+    const items = allProperties.filter(p => p.client === activeClient);
     return {
       total: items.length,
       budgetMatch: items.filter(p => p.category === "budget_match").length,
@@ -295,6 +374,7 @@ export default function App() {
             <TabsTrigger value="compare"><Scale className="w-3.5 h-3.5 mr-1.5" />Compare{compareIds.length > 0 && ` (${compareIds.length})`}</TabsTrigger>
             <TabsTrigger value="counties"><Tractor className="w-3.5 h-3.5 mr-1.5" />Counties</TabsTrigger>
             <TabsTrigger value="client"><Filter className="w-3.5 h-3.5 mr-1.5" />Client</TabsTrigger>
+            <TabsTrigger value="engines"><Globe className="w-3.5 h-3.5 mr-1.5" />Search Engines</TabsTrigger>
           </TabsList>
 
           {(tab === "results" || tab === "map") && (
@@ -315,22 +395,10 @@ export default function App() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {filtered.map(p => <PropertyCard key={p.id} p={p} client={client} compare={compareIds.includes(p.id)} onCompare={toggleCompare} />)}
             </div>
-            {filtered.length === 0 && properties.filter(p => p.client === activeClient).length === 0 && (
-              <div className="text-center py-16 text-gray-400">
-                <Search className="w-10 h-10 mx-auto mb-3 text-slate-300" />
-                <p className="text-base font-medium text-slate-500 mb-1">Research brief created for {client.name}</p>
-                <p className="text-sm text-gray-400 max-w-md mx-auto mb-4">
-                  No properties added yet. Start researching land listings that match this client's criteria and add them here.
-                </p>
-                <div className="text-xs text-left max-w-sm mx-auto bg-white rounded-lg border p-4 space-y-1.5">
-                  <div><span className="text-gray-500">Budget:</span> <strong>{fmt(client.budgetCashMin)} – {fmt(client.budgetCashMax)}</strong></div>
-                  <div><span className="text-gray-500">Monthly:</span> <strong>{client.budgetMonthly}</strong></div>
-                  <div><span className="text-gray-500">Target Counties:</span> <strong>{client.targetCounties.length > 0 ? client.targetCounties.join(", ") : "Any"}</strong></div>
-                  <div><span className="text-gray-500">Purpose:</span> <strong>{client.purpose}</strong></div>
-                </div>
-              </div>
+            {filtered.length === 0 && allProperties.filter(p => p.client === activeClient).length === 0 && (
+              <EmptyResearchState client={client} />
             )}
-            {filtered.length === 0 && properties.filter(p => p.client === activeClient).length > 0 && <div className="text-center py-12 text-gray-400"><AlertTriangle className="w-8 h-8 mx-auto mb-2" /><p className="text-sm">No properties match filters</p></div>}
+            {filtered.length === 0 && allProperties.filter(p => p.client === activeClient).length > 0 && <div className="text-center py-12 text-gray-400"><AlertTriangle className="w-8 h-8 mx-auto mb-2" /><p className="text-sm">No properties match filters</p></div>}
           </TabsContent>
 
           <TabsContent value="map">
@@ -352,7 +420,7 @@ export default function App() {
 
           <TabsContent value="counties">
             <div className="grid gap-3">
-              {countyData.filter(c => properties.some(p => p.client === activeClient && p.county === c.county)).map(c => (
+              {countyData.filter(c => allProperties.some(p => p.client === activeClient && p.county === c.county)).map(c => (
                 <Card key={c.county} className="border"><CardContent className="p-4">
                   <div className="flex items-center justify-between mb-2">
                     <h3 className="font-bold">{c.county} County, {c.state}</h3>
@@ -396,6 +464,10 @@ export default function App() {
                 <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs">{client.notes}</div>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="engines">
+            <SearchEngineSettings />
           </TabsContent>
         </Tabs>
       </main>

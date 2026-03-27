@@ -11,8 +11,10 @@ import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { Plus, ClipboardCopy, Check, ArrowLeft, Search, AlertCircle } from "lucide-react";
+import { Plus, ClipboardCopy, Check, ArrowLeft, Search, AlertCircle, Globe, ExternalLink } from "lucide-react";
 import { supabase } from "./lib/supabase";
+import { loadSearchEngines, generateSearchPlan, type SearchPlan } from "./data/searchEngines";
+import { addResearchLogEntry } from "./data/propertyCache";
 
 const US_STATES = ["Missouri", "Arkansas", "Oklahoma", "Texas", "Kansas", "Tennessee", "Kentucky", "Illinois"];
 
@@ -130,6 +132,7 @@ export default function NewResearchForm({ onSave }: NewResearchFormProps) {
   const [countyInput, setCountyInput] = useState("");
   const [showCountySuggestions, setShowCountySuggestions] = useState(false);
   const [savedId, setSavedId] = useState<string | null>(null);
+  const [searchPlan, setSearchPlan] = useState<SearchPlan[]>([]);
 
   function toggleState(state: string) {
     setForm(f => ({
@@ -284,6 +287,44 @@ export default function NewResearchForm({ onSave }: NewResearchFormProps) {
         }
         setSavedId(localId);
 
+        // Generate search plan
+        const criteria = {
+          states: form.states.length > 0 ? form.states : ["Missouri"],
+          counties: form.counties,
+          budgetCashMin: form.budgetCashMin,
+          budgetCashMax: form.budgetCashMax,
+          acreageMin: form.minAcres ? parseFloat(form.minAcres) : 0,
+          acreageMax: form.maxAcres ? parseFloat(form.maxAcres) : 100,
+          ownerFinancing: form.ownerFinancing,
+          rvMobileOk: form.landUses.includes("rv_mobile"),
+          unrestricted: true,
+        };
+        const plan = generateSearchPlan(criteria);
+        setSearchPlan(plan);
+
+        // Log the research run
+        const engines = loadSearchEngines().filter(e => e.enabled);
+        addResearchLogEntry({
+          id: localId,
+          clientName: form.clientName || "Unnamed",
+          timestamp: new Date().toISOString(),
+          criteria: {
+            states: form.states,
+            counties: form.counties,
+            budgetCashMin: form.budgetCashMin,
+            budgetCashMax: form.budgetCashMax,
+            acreageMin: form.minAcres ? parseFloat(form.minAcres) : 0,
+            acreageMax: form.maxAcres ? parseFloat(form.maxAcres) : 100,
+            ownerFinancing: form.ownerFinancing,
+          },
+          enginesSearched: engines.map(e => e.id),
+          propertiesFound: 0,
+          propertiesFromCache: 0,
+          newPropertiesAdded: 0,
+          status: "pending",
+          notes: "",
+        });
+
         // Create client entry and notify parent
         if (onSave) {
           const landUseLabels = form.landUses.map(id => LAND_USES.find(u => u.id === id)?.label || id);
@@ -308,8 +349,6 @@ export default function NewResearchForm({ onSave }: NewResearchFormProps) {
               form.notes,
             ].filter(Boolean).join(". "),
           });
-          // Close dialog after successful save
-          setTimeout(() => setOpen(false), 1500);
         }
       }
     } catch (err) {
@@ -344,6 +383,7 @@ export default function NewResearchForm({ onSave }: NewResearchFormProps) {
     setCopied(false);
     setSaveError("");
     setSavedId(null);
+    setSearchPlan([]);
   }
 
   function handleClose(isOpen: boolean) {
@@ -734,6 +774,33 @@ export default function NewResearchForm({ onSave }: NewResearchFormProps) {
                       ? "Research saved locally & copied to clipboard! Ready to start research."
                       : `Research saved to database (ID: ${savedId})`}
                   </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Search Plan */}
+            {searchPlan.length > 0 && savedId && (
+              <Card className="border border-blue-200 bg-blue-50">
+                <CardContent className="p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Globe className="w-4 h-4 text-blue-600" />
+                    <span className="text-xs font-semibold text-blue-700">
+                      Search Plan — {searchPlan.length} searches across {new Set(searchPlan.map(p => p.engine.id)).size} sites
+                    </span>
+                  </div>
+                  <div className="space-y-1 max-h-40 overflow-y-auto">
+                    {searchPlan.map((plan, i) => (
+                      <a key={i} href={plan.searchUrl} target="_blank" rel="noopener noreferrer"
+                        className="flex items-center gap-2 p-1.5 rounded bg-white/60 hover:bg-white transition-colors group text-xs">
+                        <span className="font-medium text-blue-800 min-w-[80px]">{plan.engine.name}</span>
+                        <span className="text-blue-600 truncate flex-1">{plan.county ? `${plan.county} Co, ${plan.state}` : plan.state}</span>
+                        <ExternalLink className="w-3 h-3 text-blue-300 group-hover:text-blue-600" />
+                      </a>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-blue-500 mt-2">
+                    Click each link to search. Each property found must have a direct listing URL.
+                  </p>
                 </CardContent>
               </Card>
             )}
