@@ -14,7 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Slider } from "@/components/ui/slider";
 import {
   MapPin, DollarSign, Star, ArrowUpDown, Filter, BarChart3,
-  Scale, Home, Landmark, Tractor, AlertTriangle, ExternalLink
+  Scale, Home, Landmark, Tractor, AlertTriangle, ExternalLink, Search
 } from "lucide-react";
 import NewResearchForm from "./NewResearchForm";
 
@@ -205,8 +205,23 @@ export default function App() {
   const [sortBy, setSortBy] = useState<string>("score");
   const [compareIds, setCompareIds] = useState<number[]>([]);
   const [tab, setTab] = useState("results");
+  const [customClients, setCustomClients] = useState<Client[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('custom_clients') || '[]');
+    } catch { return []; }
+  });
 
-  const client = clients.find(c => c.name === activeClient) || clients[0];
+  const allClients = [...clients, ...customClients];
+
+  function handleNewResearch(newClient: Client) {
+    const updated = [...customClients, newClient];
+    setCustomClients(updated);
+    try { localStorage.setItem('custom_clients', JSON.stringify(updated)); } catch {}
+    setActiveClient(newClient.name);
+    setTab("client");
+  }
+
+  const client = allClients.find(c => c.name === activeClient) || allClients[0];
 
   const filtered = useMemo(() => {
     let items = properties.filter(p => p.client === activeClient);
@@ -251,10 +266,10 @@ export default function App() {
             <div><h1 className="text-base font-bold text-slate-900 leading-none">AADreamland Market Research</h1><p className="text-[10px] text-slate-400 mt-0.5">Wholesale Market Intelligence</p></div>
           </div>
           <div className="flex items-center gap-2">
-            <NewResearchForm />
+            <NewResearchForm onSave={handleNewResearch} />
             <Select value={activeClient} onValueChange={setActiveClient}>
               <SelectTrigger className="w-40 h-8 text-sm"><SelectValue /></SelectTrigger>
-              <SelectContent>{clients.map(c => <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>)}</SelectContent>
+              <SelectContent>{allClients.map(c => <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>)}</SelectContent>
             </Select>
           </div>
         </div>
@@ -300,7 +315,22 @@ export default function App() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {filtered.map(p => <PropertyCard key={p.id} p={p} client={client} compare={compareIds.includes(p.id)} onCompare={toggleCompare} />)}
             </div>
-            {filtered.length === 0 && <div className="text-center py-12 text-gray-400"><AlertTriangle className="w-8 h-8 mx-auto mb-2" /><p className="text-sm">No properties match filters</p></div>}
+            {filtered.length === 0 && properties.filter(p => p.client === activeClient).length === 0 && (
+              <div className="text-center py-16 text-gray-400">
+                <Search className="w-10 h-10 mx-auto mb-3 text-slate-300" />
+                <p className="text-base font-medium text-slate-500 mb-1">Research brief created for {client.name}</p>
+                <p className="text-sm text-gray-400 max-w-md mx-auto mb-4">
+                  No properties added yet. Start researching land listings that match this client's criteria and add them here.
+                </p>
+                <div className="text-xs text-left max-w-sm mx-auto bg-white rounded-lg border p-4 space-y-1.5">
+                  <div><span className="text-gray-500">Budget:</span> <strong>{fmt(client.budgetCashMin)} – {fmt(client.budgetCashMax)}</strong></div>
+                  <div><span className="text-gray-500">Monthly:</span> <strong>{client.budgetMonthly}</strong></div>
+                  <div><span className="text-gray-500">Target Counties:</span> <strong>{client.targetCounties.length > 0 ? client.targetCounties.join(", ") : "Any"}</strong></div>
+                  <div><span className="text-gray-500">Purpose:</span> <strong>{client.purpose}</strong></div>
+                </div>
+              </div>
+            )}
+            {filtered.length === 0 && properties.filter(p => p.client === activeClient).length > 0 && <div className="text-center py-12 text-gray-400"><AlertTriangle className="w-8 h-8 mx-auto mb-2" /><p className="text-sm">No properties match filters</p></div>}
           </TabsContent>
 
           <TabsContent value="map">

@@ -100,7 +100,27 @@ function fmt(n: number) {
   return "$" + n.toLocaleString();
 }
 
-export default function NewResearchForm() {
+interface NewResearchFormProps {
+  onSave?: (client: {
+    name: string;
+    purpose: string;
+    targetCounties: string[];
+    budgetCashMin: number;
+    budgetCashMax: number;
+    budgetDown: string;
+    budgetMonthly: string;
+    acreageMin: number;
+    acreageMax: number;
+    mustUnrestricted: boolean;
+    mustNoHOA: boolean;
+    mustOwnerFinancing: boolean;
+    mustRoadAccess: string;
+    mustLiveOnSite: boolean;
+    notes: string;
+  }) => void;
+}
+
+export default function NewResearchForm({ onSave }: NewResearchFormProps) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<FormData>({ ...defaultForm });
   const [step, setStep] = useState<"form" | "summary">("form");
@@ -263,6 +283,34 @@ export default function NewResearchForm() {
           // clipboard not available, that's ok
         }
         setSavedId(localId);
+
+        // Create client entry and notify parent
+        if (onSave) {
+          const landUseLabels = form.landUses.map(id => LAND_USES.find(u => u.id === id)?.label || id);
+          onSave({
+            name: form.clientName || `Research ${new Date().toLocaleDateString()}`,
+            purpose: landUseLabels.length > 0 ? landUseLabels.join(", ") : "General land research",
+            targetCounties: form.counties,
+            budgetCashMin: form.budgetCashMin,
+            budgetCashMax: form.budgetCashMax,
+            budgetDown: `${fmt(form.downPaymentMin)} – ${fmt(form.downPaymentMax)}`,
+            budgetMonthly: `${fmt(form.monthlyMin)} – ${fmt(form.monthlyMax)}`,
+            acreageMin: form.minAcres ? parseFloat(form.minAcres) : 0,
+            acreageMax: form.maxAcres ? parseFloat(form.maxAcres) : 100,
+            mustUnrestricted: true,
+            mustNoHOA: form.noHOA,
+            mustOwnerFinancing: form.ownerFinancing,
+            mustRoadAccess: form.roadRequirement || "Any",
+            mustLiveOnSite: form.immediateResidence,
+            notes: [
+              form.states.length > 0 ? `States: ${form.states.join(", ")}` : "",
+              form.powerNearby === "yes" ? "Power required" : "",
+              form.notes,
+            ].filter(Boolean).join(". "),
+          });
+          // Close dialog after successful save
+          setTimeout(() => setOpen(false), 1500);
+        }
       }
     } catch (err) {
       console.error('Save error:', err);
