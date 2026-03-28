@@ -1173,8 +1173,8 @@ export default function App() {
                     </TableBody>
                   </Table>
                 </div>
-                {/* Right: Map */}
-                <div className="w-[45%] min-w-[350px] border rounded-lg overflow-hidden shrink-0">
+                {/* Right: Map — z-index:0 so dialogs/modals always appear above */}
+                <div className="w-[45%] min-w-[350px] border rounded-lg overflow-hidden shrink-0 relative z-0">
                   <LeafletMap items={filtered} highlightId={highlightId} onSelect={(id) => setHighlightId(id)} />
                 </div>
               </div>
@@ -1204,7 +1204,7 @@ export default function App() {
           </TabsContent>
 
           <TabsContent value="map">
-            <div style={{ height: 'calc(100vh - 240px)', minHeight: 500 }}>
+            <div className="relative z-0" style={{ height: 'calc(100vh - 240px)', minHeight: 500 }}>
               <LeafletMap items={filtered} highlightId={highlightId} onSelect={(id) => setHighlightId(id)} />
             </div>
           </TabsContent>
