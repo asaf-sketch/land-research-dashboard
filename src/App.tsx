@@ -448,7 +448,7 @@ export default function App() {
       return 0;
     });
     return items;
-  }, [activeClient, filterCounty, filterCat, filterUnrestricted, filterFinancing, maxPrice, sortBy, client]);
+  }, [allProperties, activeClient, filterCounty, filterCat, filterUnrestricted, filterFinancing, maxPrice, sortBy, client]);
 
   const compareItems = allProperties.filter(p => compareIds.includes(p.id));
   const counties = [...new Set(allProperties.filter(p => p.client === activeClient).map(p => p.county))];
