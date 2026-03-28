@@ -12,10 +12,12 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   MapPin, DollarSign, Star, ArrowUpDown, Filter, BarChart3,
   Scale, Home, Landmark, Tractor, AlertTriangle, ExternalLink, Search,
-  Globe,
+  Globe, ArrowLeft, Copy as CopyIcon,
 } from "lucide-react";
 import NewResearchForm from "./NewResearchForm";
 import SearchEngineSettings from "./components/SearchEngineSettings";
@@ -40,6 +42,13 @@ const COUNTY_COORDS: Record<string, [number, number]> = {
   // Missouri counties
   "Douglas": [36.93, -92.50], "Ozark": [36.65, -92.44], "St. Clair": [38.05, -93.77],
   "Taney": [36.65, -93.02], "Christian": [36.97, -93.19], "Shannon": [37.15, -91.40],
+  "Macon": [39.83, -92.47], "Butler": [36.70, -90.40], "Johnson": [38.75, -93.80],
+  "Madison": [37.48, -90.33], "Greer": [34.92, -99.58],
+  // Tennessee counties
+  "Benton": [35.95, -88.08], "Fentress": [36.38, -84.93], "Meigs": [35.51, -84.82],
+  "Decatur": [35.59, -88.12], "Scott": [36.43, -84.52], "Hawkins": [36.47, -82.95],
+  "Henderson": [35.65, -88.38], "Perry": [35.63, -87.87], "Wayne": [35.24, -87.80],
+  "Hickman": [35.80, -87.47], "Lewis": [35.52, -87.50], "Lawrence": [35.22, -87.40],
   // Default
   "Unknown": [35.50, -97.50],
 };
@@ -293,8 +302,8 @@ function LeafletMap({ items, highlightId, onSelect }: { items: Property[]; highl
 }
 
 // Table row for a single property
-function PropertyTableRow({ p, client, isHighlighted, onHover }: {
-  p: Property; client: Client; isHighlighted: boolean; onHover: (id: number | null) => void;
+function PropertyTableRow({ p, client, isHighlighted, onHover, onSelect }: {
+  p: Property; client: Client; isHighlighted: boolean; onHover: (id: number | null) => void; onSelect?: (id: number) => void;
 }) {
   const style = catStyle(p.category);
   const score = wholesaleScore(p, client);
@@ -303,6 +312,7 @@ function PropertyTableRow({ p, client, isHighlighted, onHover }: {
       className={`cursor-pointer transition-colors text-xs ${isHighlighted ? 'bg-blue-50 ring-1 ring-blue-300' : 'hover:bg-slate-50'}`}
       onMouseEnter={() => onHover(p.id)}
       onMouseLeave={() => onHover(null)}
+      onClick={() => onSelect?.(p.id)}
     >
       <TableCell className="py-2 px-2">
         <div className={`${scoreColor(score)} rounded px-1.5 py-0.5 text-[10px] font-bold text-center w-8`}>{score}</div>
@@ -671,6 +681,273 @@ function EmptyResearchState({
   );
 }
 
+// Property Detail View - Full page detail view for a selected property
+function PropertyDetailView({
+  property,
+  client,
+  onBack
+}: {
+  property: Property;
+  client: Client;
+  onBack: () => void;
+}) {
+  const score = wholesaleScore(property, client);
+  const style = catStyle(property.category);
+
+  // Due diligence checklist state
+  const [ddChecks, setDdChecks] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem(`dd_${property.id}`);
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+  });
+
+  const [contactStatus, setContactStatus] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem(`contact_${property.id}`);
+      return saved || "Not contacted";
+    } catch { return "Not contacted"; }
+  });
+
+  const [notes, setNotes] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem(`notes_${property.id}`);
+      return saved || "";
+    } catch { return ""; }
+  });
+
+  const dueDiligenceItems = [
+    "Title search completed",
+    "Tax liens checked",
+    "Zoning verified",
+    "Access verified on-site",
+    "Utilities confirmed",
+    "Survey obtained",
+    "Environmental check",
+  ];
+
+  const handleDdChange = (item: string, checked: boolean) => {
+    const newChecks = { ...ddChecks, [item]: checked };
+    setDdChecks(newChecks);
+    try {
+      localStorage.setItem(`dd_${property.id}`, JSON.stringify(newChecks));
+    } catch {}
+  };
+
+  const handleContactStatusChange = (status: string) => {
+    setContactStatus(status);
+    try {
+      localStorage.setItem(`contact_${property.id}`, status);
+    } catch {}
+  };
+
+  const handleNotesChange = (text: string) => {
+    setNotes(text);
+    try {
+      localStorage.setItem(`notes_${property.id}`, text);
+    } catch {}
+  };
+
+  const handleCopyAPN = () => {
+    if (property.apn) {
+      navigator.clipboard.writeText(property.apn);
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-screen bg-slate-50">
+      {/* Back button */}
+      <div className="bg-white border-b p-4">
+        <Button variant="outline" size="sm" onClick={onBack} className="flex items-center gap-2">
+          <ArrowLeft className="w-4 h-4" /> Back to Results
+        </Button>
+      </div>
+
+      {/* Main content */}
+      <div className="flex-1 overflow-auto">
+        <div className="max-w-[1600px] mx-auto p-4">
+          <div className="grid grid-cols-[60%,1fr] gap-4">
+            {/* Left column (60%) */}
+            <div className="space-y-4">
+              {/* Property name */}
+              <h1 className="text-3xl font-bold text-slate-900">{property.name}</h1>
+
+              {/* Listing source badge */}
+              <div className="flex items-center gap-2">
+                <Badge className="bg-slate-100 text-slate-800 hover:bg-slate-100">
+                  <Globe className="w-3 h-3 mr-1" />
+                  {property.seller}
+                </Badge>
+                {property.listingUrl && (
+                  <a href={property.listingUrl} target="_blank" rel="noopener noreferrer"
+                    className="text-blue-600 hover:text-blue-800 flex items-center gap-1 text-sm">
+                    View Listing <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                )}
+              </div>
+
+              {/* Property data grid */}
+              <Card className="border">
+                <CardContent className="p-4">
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="border-r pr-4">
+                      <div className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-3">Price</div>
+                      <div className="text-2xl font-bold text-emerald-600">{property.cashPrice ? fmt(property.cashPrice) : "—"}</div>
+                      <div className="text-xs text-gray-500 mt-1">Cash price</div>
+                    </div>
+                    <div className="border-r pr-4">
+                      <div className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-3">Acreage</div>
+                      <div className="text-2xl font-bold text-slate-900">{property.acres ?? "—"}</div>
+                      <div className="text-xs text-gray-500 mt-1">Acres</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-3">$/Acre</div>
+                      <div className="text-2xl font-bold text-slate-900">{property.pricePerAcre ? fmt(property.pricePerAcre) : "—"}</div>
+                      <div className="text-xs text-gray-500 mt-1">Price per acre</div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Full property details grid */}
+              <Card className="border">
+                <CardHeader className="pb-3"><CardTitle className="text-sm">Property Details</CardTitle></CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div><span className="text-gray-500">Down Payment:</span> <strong>{property.downPayment}</strong></div>
+                    <div><span className="text-gray-500">Monthly Payment:</span> <strong>{property.monthlyPayment}</strong></div>
+                    <div><span className="text-gray-500">County/State:</span> <strong>{property.county}, {property.state}</strong></div>
+                    <div><span className="text-gray-500">APN:</span> <strong className="font-mono">{property.apn || "—"}</strong></div>
+                    <div><span className="text-gray-500">Elevation:</span> <strong>{property.elevation}</strong></div>
+                    <div><span className="text-gray-500">Soil Quality:</span> <strong>{property.soilQuality}</strong></div>
+                    <div><span className="text-gray-500">Road Access:</span> <strong>{property.roadAccess}</strong></div>
+                    <div><span className="text-gray-500">Power Nearby:</span> <strong>{property.powerNearby}</strong></div>
+                    <div><span className="text-gray-500">Unrestricted:</span> <strong>{property.unrestricted ? "YES" : "NO"}</strong></div>
+                    <div><span className="text-gray-500">Owner Financing:</span> <strong>{property.ownerFinancing ? "YES" : "NO"}</strong></div>
+                    <div><span className="text-gray-500">RV/Mobile OK:</span> <strong>{property.rvMobileOk}</strong></div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Owner/Seller section */}
+              <Card className="border">
+                <CardHeader className="pb-3"><CardTitle className="text-sm">Owner/Seller</CardTitle></CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  <div><span className="text-gray-500">Seller Name:</span> <strong>{property.seller}</strong></div>
+                  <div><span className="text-gray-500">Seller Type:</span> <strong>{property.sellerType}</strong></div>
+                  {property.listingUrl && (
+                    <a href={property.listingUrl} target="_blank" rel="noopener noreferrer"
+                      className="text-blue-600 hover:text-blue-800 flex items-center gap-1 mt-2">
+                      Contact Seller <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Due Diligence Checklist */}
+              <Card className="border">
+                <CardHeader className="pb-3"><CardTitle className="text-sm">Due Diligence</CardTitle></CardHeader>
+                <CardContent className="space-y-2">
+                  {dueDiligenceItems.map((item) => (
+                    <div key={item} className="flex items-center gap-2">
+                      <Checkbox
+                        checked={ddChecks[item] || false}
+                        onCheckedChange={(checked) => handleDdChange(item, checked as boolean)}
+                      />
+                      <label className="text-sm cursor-pointer">{item}</label>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+
+              {/* Owner Contact Status */}
+              <Card className="border">
+                <CardHeader className="pb-3"><CardTitle className="text-sm">Contact Status</CardTitle></CardHeader>
+                <CardContent>
+                  <Select value={contactStatus} onValueChange={handleContactStatusChange}>
+                    <SelectTrigger className="h-8 text-sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Not contacted">Not contacted</SelectItem>
+                      <SelectItem value="Contacted - waiting">Contacted - waiting</SelectItem>
+                      <SelectItem value="In negotiation">In negotiation</SelectItem>
+                      <SelectItem value="Offer made">Offer made</SelectItem>
+                      <SelectItem value="Accepted">Accepted</SelectItem>
+                      <SelectItem value="Rejected">Rejected</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </CardContent>
+              </Card>
+
+              {/* Notes */}
+              <Card className="border">
+                <CardHeader className="pb-3"><CardTitle className="text-sm">Notes</CardTitle></CardHeader>
+                <CardContent>
+                  <Textarea
+                    value={notes}
+                    onChange={(e) => handleNotesChange(e.target.value)}
+                    placeholder="Add notes about this property..."
+                    className="min-h-[100px] text-sm"
+                  />
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Right column (40%) */}
+            <div className="space-y-4">
+              {/* Map */}
+              <Card className="border h-[500px] overflow-hidden">
+                <LeafletMap
+                  items={[property]}
+                  highlightId={property.id}
+                  onSelect={() => {}}
+                />
+              </Card>
+
+              {/* Score and Category badges */}
+              <Card className="border">
+                <CardContent className="p-4 space-y-3">
+                  <div>
+                    <div className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-2">Wholesale Score</div>
+                    <div className={`${scoreColor(score)} rounded-lg px-4 py-3 text-center font-bold text-xl`}>{score}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-2">Category</div>
+                    <Badge className={`w-full text-center justify-center py-2 ${style.badge}`}>{style.label}</Badge>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Quick action buttons */}
+              <Card className="border">
+                <CardContent className="p-4 space-y-2">
+                  {property.listingUrl && (
+                    <Button
+                      className="w-full"
+                      onClick={() => window.open(property.listingUrl, '_blank')}
+                    >
+                      <ExternalLink className="w-4 h-4 mr-2" /> Open Listing
+                    </Button>
+                  )}
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={handleCopyAPN}
+                    disabled={!property.apn}
+                  >
+                    <CopyIcon className="w-4 h-4 mr-2" /> Copy APN
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [activeClient, setActiveClient] = useState<string>("Marietta");
   const [filterCounty, setFilterCounty] = useState<string>("all");
@@ -682,6 +959,7 @@ export default function App() {
   const [compareIds, setCompareIds] = useState<number[]>([]);
   const [highlightId, setHighlightId] = useState<number | null>(null);
   const [tab, setTab] = useState("results");
+  const [selectedProperty, setSelectedProperty] = useState<number | null>(null);
   const [customClients, setCustomClients] = useState<Client[]>(() => {
     try {
       return JSON.parse(localStorage.getItem('custom_clients') || '[]');
@@ -775,6 +1053,14 @@ export default function App() {
     };
   }, [activeClient, client]);
 
+  // Show property detail view if one is selected
+  if (selectedProperty !== null) {
+    const selectedProp = allProperties.find(p => p.id === selectedProperty);
+    if (selectedProp) {
+      return <PropertyDetailView property={selectedProp} client={client} onBack={() => setSelectedProperty(null)} />;
+    }
+  }
+
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="bg-white border-b sticky top-0 z-30">
@@ -851,7 +1137,7 @@ export default function App() {
                     </TableHeader>
                     <TableBody>
                       {filtered.map(p => (
-                        <PropertyTableRow key={p.id} p={p} client={client} isHighlighted={p.id === highlightId} onHover={setHighlightId} />
+                        <PropertyTableRow key={p.id} p={p} client={client} isHighlighted={p.id === highlightId} onHover={setHighlightId} onSelect={setSelectedProperty} />
                       ))}
                     </TableBody>
                   </Table>

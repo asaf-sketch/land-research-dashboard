@@ -57,6 +57,7 @@ const ROAD_OPTIONS = ["Paved", "Gravel OK", "Any"];
 
 interface FormData {
   clientName: string;
+  clientDescription: string;
   budgetCashMin: number;
   budgetCashMax: number;
   downPaymentMin: number;
@@ -78,6 +79,7 @@ interface FormData {
 
 const defaultForm: FormData = {
   clientName: "",
+  clientDescription: "",
   budgetCashMin: 0,
   budgetCashMax: 20000,
   downPaymentMin: 0,
@@ -464,6 +466,17 @@ export default function NewResearchForm({ onSave }: NewResearchFormProps) {
                 value={form.clientName}
                 onChange={e => setForm(f => ({ ...f, clientName: e.target.value }))}
                 className="mt-1"
+              />
+            </div>
+
+            {/* Client Description */}
+            <div>
+              <Label className="text-sm font-medium">Client Description</Label>
+              <Textarea
+                placeholder="Describe what the client is looking for in free text... e.g., 'Looking for 10+ acres, RV parking, no HOA, under $3500/acre in Oklahoma or Missouri'"
+                value={form.clientDescription}
+                onChange={e => setForm(f => ({ ...f, clientDescription: e.target.value }))}
+                className="mt-1 min-h-[80px]"
               />
             </div>
 
