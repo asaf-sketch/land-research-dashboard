@@ -401,6 +401,45 @@ function CompareView({ items, client }: { items: Property[]; client: Client }) {
   );
 }
 
+// Progressive fallback: tries strict criteria first, then broadens search until results found
+function progressiveFallbackSearch(client: Client, clientStates: string[], clientCounties: string[]): ScrapedProperty[] {
+  // Attempt 1: Full criteria
+  let results = searchScrapedProperties({
+    states: clientStates.length > 0 ? clientStates : undefined,
+    counties: clientCounties.length > 0 ? clientCounties : undefined,
+    maxPrice: client.budgetCashMax,
+    minAcres: client.acreageMin > 0 ? client.acreageMin : undefined,
+    maxAcres: client.acreageMax > 0 && client.acreageMax < 100 ? client.acreageMax : undefined,
+    ownerFinancing: client.mustOwnerFinancing || undefined,
+  });
+  if (results.length > 0) return results;
+
+  // Attempt 2: Drop county filter
+  console.log('[AADreamland] No results with full criteria, trying without county filter...');
+  results = searchScrapedProperties({
+    states: clientStates.length > 0 ? clientStates : undefined,
+    maxPrice: client.budgetCashMax,
+    minAcres: client.acreageMin > 0 ? client.acreageMin : undefined,
+    maxAcres: client.acreageMax > 0 && client.acreageMax < 100 ? client.acreageMax : undefined,
+  });
+  if (results.length > 0) return results;
+
+  // Attempt 3: Drop county + acreage filters, just state + budget
+  console.log('[AADreamland] Still no results, trying state + budget only...');
+  results = searchScrapedProperties({
+    states: clientStates.length > 0 ? clientStates : undefined,
+    maxPrice: client.budgetCashMax,
+  });
+  if (results.length > 0) return results;
+
+  // Attempt 4: Just budget (any state)
+  console.log('[AADreamland] No results for specified states, searching all states with budget only...');
+  results = searchScrapedProperties({
+    maxPrice: client.budgetCashMax,
+  });
+  return results;
+}
+
 function EmptyResearchState({
   client,
   onResearchComplete
@@ -446,15 +485,9 @@ function EmptyResearchState({
       eventSource?.close();
       setPhase("done");
       setProgress(100);
-      // Fall back to scraped properties if timeout
-      const fallbackResults = searchScrapedProperties({
-        states: clientStates.length > 0 ? clientStates : undefined,
-        counties: clientCounties.length > 0 ? clientCounties : undefined,
-        maxPrice: client.budgetCashMax,
-        minAcres: client.acreageMin > 0 ? client.acreageMin : undefined,
-        maxAcres: client.acreageMax > 0 && client.acreageMax < 100 ? client.acreageMax : undefined,
-        ownerFinancing: client.mustOwnerFinancing || undefined,
-      });
+      // Fall back to scraped properties if timeout — use progressive search
+      console.log('[AADreamland] API timeout, falling back to scraped data...');
+      const fallbackResults = progressiveFallbackSearch(client, clientStates, clientCounties);
       const convertedResults = convertScrapedToProperty(fallbackResults, client);
       onResearchComplete(convertedResults);
     }, 90000);
@@ -513,14 +546,7 @@ function EmptyResearchState({
         }
 
         // ALWAYS merge API results with static fallback data for maximum coverage
-        const fallbackResults = searchScrapedProperties({
-          states: clientStates.length > 0 ? clientStates : undefined,
-          counties: clientCounties.length > 0 ? clientCounties : undefined,
-          maxPrice: client.budgetCashMax,
-          minAcres: client.acreageMin > 0 ? client.acreageMin : undefined,
-          maxAcres: client.acreageMax > 0 && client.acreageMax < 100 ? client.acreageMax : undefined,
-          ownerFinancing: client.mustOwnerFinancing || undefined,
-        });
+        const fallbackResults = progressiveFallbackSearch(client, clientStates, clientCounties);
 
         // Merge and deduplicate by title similarity
         const allScraped = [...rawResults];
@@ -544,16 +570,10 @@ function EmptyResearchState({
         setPhase("analyzing");
         eventSource?.close();
 
-        // Fall back to scraped properties
+        // Fall back to scraped properties — use progressive search
         setTimeout(() => {
-          const fallbackResults = searchScrapedProperties({
-            states: clientStates.length > 0 ? clientStates : undefined,
-            counties: clientCounties.length > 0 ? clientCounties : undefined,
-            maxPrice: client.budgetCashMax,
-            minAcres: client.acreageMin > 0 ? client.acreageMin : undefined,
-            maxAcres: client.acreageMax > 0 && client.acreageMax < 100 ? client.acreageMax : undefined,
-            ownerFinancing: client.mustOwnerFinancing || undefined,
-          });
+          console.log('[AADreamland] API error, falling back to scraped data...');
+          const fallbackResults = progressiveFallbackSearch(client, clientStates, clientCounties);
           const convertedResults = convertScrapedToProperty(fallbackResults, client);
           setPhase("done");
           setProgress(100);
@@ -564,15 +584,9 @@ function EmptyResearchState({
       console.error('Error starting API call:', err);
       clearTimeout(timeoutId);
 
-      // Fall back to scraped properties
-      const fallbackResults = searchScrapedProperties({
-        states: clientStates.length > 0 ? clientStates : undefined,
-        counties: clientCounties.length > 0 ? clientCounties : undefined,
-        maxPrice: client.budgetCashMax,
-        minAcres: client.acreageMin > 0 ? client.acreageMin : undefined,
-        maxAcres: client.acreageMax > 0 && client.acreageMax < 100 ? client.acreageMax : undefined,
-        ownerFinancing: client.mustOwnerFinancing || undefined,
-      });
+      // Fall back to scraped properties — use progressive search
+      console.log('[AADreamland] API catch error, falling back to scraped data...');
+      const fallbackResults = progressiveFallbackSearch(client, clientStates, clientCounties);
       const convertedResults = convertScrapedToProperty(fallbackResults, client);
       setPhase("done");
       setProgress(100);
@@ -920,7 +934,7 @@ function PropertyDetailView({
             {/* Right column (40%) */}
             <div className="space-y-4">
               {/* Map */}
-              <Card className="border h-[500px] overflow-hidden">
+              <Card className="border h-[500px] overflow-hidden map-isolation-wrapper">
                 <LeafletMap
                   items={[property]}
                   highlightId={property.id}
@@ -991,6 +1005,8 @@ export default function App() {
   });
 
   const [cachedProperties, setCachedProperties] = useState<CachedProperty[]>([]);
+  // Counter to force re-render when research results change (localStorage is not reactive)
+  const [researchVersion, setResearchVersion] = useState(0);
 
   // Load cached properties on mount
   useEffect(() => {
@@ -1024,7 +1040,7 @@ export default function App() {
     } catch {}
 
     return merged;
-  }, [cachedProperties, activeClient]);
+  }, [cachedProperties, activeClient, researchVersion]);
 
   function handleNewResearch(newClient: Client) {
     const updated = [...customClients, newClient];
@@ -1173,8 +1189,8 @@ export default function App() {
                     </TableBody>
                   </Table>
                 </div>
-                {/* Right: Map — z-index:0 so dialogs/modals always appear above */}
-                <div className="w-[45%] min-w-[350px] border rounded-lg overflow-hidden shrink-0 relative z-0">
+                {/* Right: Map — isolation:isolate traps Leaflet z-indexes so dialogs/modals always appear above */}
+                <div className="w-[45%] min-w-[350px] border rounded-lg overflow-hidden shrink-0 map-isolation-wrapper">
                   <LeafletMap items={filtered} highlightId={highlightId} onSelect={(id) => setHighlightId(id)} />
                 </div>
               </div>
@@ -1184,9 +1200,12 @@ export default function App() {
                   <EmptyResearchState
                     client={client}
                     onResearchComplete={(results) => {
+                      console.log(`[AADreamland] Research complete for ${client.name}: ${results.length} results`);
                       try {
                         localStorage.setItem(`research_results_${client.name}`, JSON.stringify(results));
-                      } catch { }
+                      } catch {}
+                      // Force re-render so allProperties memo picks up the new localStorage data
+                      setResearchVersion(v => v + 1);
                       setCachedProperties([...loadPropertyCache()]);
                     }}
                   />
@@ -1196,7 +1215,21 @@ export default function App() {
                   <div className="text-center py-12 text-gray-400">
                     <Search className="w-8 h-8 mx-auto mb-2" />
                     <p className="text-sm font-medium text-slate-600 mb-1">No properties found matching your criteria.</p>
-                    <p className="text-xs text-gray-400 mt-1">Try expanding your search area, adjusting budget, or checking different states/counties.</p>
+                    <p className="text-xs text-gray-400 mt-1">The API might have timed out, or no listings matched your exact criteria.</p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Searched: {client.targetStates?.join(", ") || "N/A"} | Budget: {fmt(client.budgetCashMax)} | Acres: {client.acreageMin}–{client.acreageMax}
+                    </p>
+                    <Button
+                      variant="outline"
+                      className="mt-4"
+                      onClick={() => {
+                        // Clear stored results and re-trigger research
+                        localStorage.removeItem(`research_results_${activeClient}`);
+                        setResearchVersion(v => v + 1);
+                      }}
+                    >
+                      <Search className="w-4 h-4 mr-2" /> Retry Research
+                    </Button>
                   </div>
                 )}
               </>
@@ -1204,7 +1237,7 @@ export default function App() {
           </TabsContent>
 
           <TabsContent value="map">
-            <div className="relative z-0" style={{ height: 'calc(100vh - 240px)', minHeight: 500 }}>
+            <div className="map-isolation-wrapper" style={{ height: 'calc(100vh - 240px)', minHeight: 500 }}>
               <LeafletMap items={filtered} highlightId={highlightId} onSelect={(id) => setHighlightId(id)} />
             </div>
           </TabsContent>
