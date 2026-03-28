@@ -25,12 +25,36 @@ export default function SearchEngineSettings() {
   const [cacheStats, setCacheStats] = useState(getCacheStats());
   const [researchLog, setResearchLog] = useState<ResearchLogEntry[]>([]);
   const [showLog, setShowLog] = useState(false);
+  const [apiUrl, setApiUrl] = useState(localStorage.getItem('api_url') || 'https://land-scraper-api.onrender.com');
+  const [testingApi, setTestingApi] = useState(false);
+  const [apiTestResult, setApiTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   useEffect(() => {
     setEngines(loadSearchEngines());
     setCacheStats(getCacheStats());
     setResearchLog(loadResearchLog());
   }, []);
+
+  async function testApiConnection() {
+    setTestingApi(true);
+    setApiTestResult(null);
+    try {
+      const response = await fetch(`${apiUrl}/health`, {
+        method: 'GET',
+        mode: 'cors',
+      });
+      if (response.ok) {
+        setApiTestResult({ ok: true, message: 'API connection successful!' });
+        localStorage.setItem('api_url', apiUrl);
+      } else {
+        setApiTestResult({ ok: false, message: `API returned status ${response.status}` });
+      }
+    } catch (err) {
+      setApiTestResult({ ok: false, message: `Connection failed: ${err instanceof Error ? err.message : 'Unknown error'}` });
+    } finally {
+      setTestingApi(false);
+    }
+  }
 
   function toggleEngine(id: string) {
     const updated = engines.map(e =>
@@ -167,6 +191,61 @@ export default function SearchEngineSettings() {
             ))}
           </div>
         ))}
+      </div>
+
+      <Separator />
+
+      {/* API Settings */}
+      <div>
+        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3 flex items-center gap-2">
+          <Settings2 className="w-3.5 h-3.5" />
+          Backend API Configuration
+        </h3>
+        <Card className="border mb-4">
+          <CardContent className="p-4">
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-gray-700 block mb-2">API Base URL</label>
+                <div className="flex gap-2">
+                  <input
+                    type="url"
+                    value={apiUrl}
+                    onChange={(e) => setApiUrl(e.target.value)}
+                    className="flex-1 text-sm border rounded px-3 py-2 font-mono"
+                    placeholder="https://land-scraper-api.onrender.com"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={testApiConnection}
+                    disabled={testingApi}
+                    className="text-xs gap-1"
+                  >
+                    {testingApi ? "Testing..." : "Test Connection"}
+                  </Button>
+                </div>
+              </div>
+
+              {apiTestResult && (
+                <div
+                  className={`text-xs p-2 rounded flex items-center gap-2 ${
+                    apiTestResult.ok
+                      ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                      : "bg-red-50 text-red-700 border border-red-200"
+                  }`}
+                >
+                  <span className={`w-2 h-2 rounded-full ${apiTestResult.ok ? "bg-emerald-600" : "bg-red-600"}`} />
+                  {apiTestResult.message}
+                </div>
+              )}
+
+              <p className="text-[11px] text-gray-500 leading-relaxed">
+                The backend API handles real estate scraping and search. When you run "Start Research", properties are fetched from this API.
+                Falls back to cached scraped properties if API is unavailable.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       <Separator />

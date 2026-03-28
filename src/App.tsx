@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { properties, clients, countyData } from "./data/properties";
 import type { Property, Client } from "./data/properties";
+import { searchScrapedProperties, getSearchedSites, type ScrapedProperty } from "./data/scrapedProperties";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,9 +20,13 @@ import {
 import NewResearchForm from "./NewResearchForm";
 import SearchEngineSettings from "./components/SearchEngineSettings";
 import { loadPropertyCache, type CachedProperty } from "./data/propertyCache";
-import { loadSearchEngines, generateSearchPlan } from "./data/searchEngines";
+
+// API configuration - change this when backend is deployed
+const API_BASE_URL = localStorage.getItem('api_url') || 'https://land-scraper-api.onrender.com';
 
 // Check if a listing URL points to a SPECIFIC property page (not a general search/seller page)
+// Note: Kept for potential future use with cached/local properties
+// @ts-ignore
 function isSpecificListingUrl(url: string): boolean {
   if (!url || url.trim() === '') return false;
   const lower = url.toLowerCase();
@@ -39,6 +44,40 @@ function isSpecificListingUrl(url: string): boolean {
   if (lower.endsWith('/land-for-sale') || lower.includes('/land-for-sale/') && !(/\d{3,}/.test(lower))) return false;
   if (lower.includes('/collections/')) return false;
   return false; // Default: not specific enough
+}
+
+function convertScrapedToProperty(scrapedList: ScrapedProperty[], client: Client): Property[] {
+  return scrapedList.map((p, idx) => ({
+    id: 9000 + idx,
+    name: p.title,
+    county: p.county,
+    state: p.state.substring(0, 2).toUpperCase(),
+    location: `${p.zip}`,
+    acres: p.acres || null,
+    cashPrice: p.price,
+    monthlyNum: Math.round(p.price / 60),
+    pricePerAcre: p.acres ? Math.round(p.price / p.acres) : null,
+    downPayment: "Contact seller",
+    monthlyPayment: `$${Math.round(p.price / 60)}/mo`,
+    category: (p.price <= client.budgetCashMax ? (p.price <= client.budgetCashMax * 0.8 ? "budget_match" : "negotiate") : "over_budget") as Property["category"],
+    wholesaleScore: p.price <= client.budgetCashMax * 0.7 ? 90 : p.price <= client.budgetCashMax ? 75 : 50,
+    seller: p.source,
+    sellerType: "TBD" as const,
+    roadAccess: "Check with seller",
+    powerNearby: "Check with seller",
+    unrestricted: true,
+    ownerFinancing: p.ownerFinancing,
+    rvMobileOk: p.ownerFinancing ? "YES" : "Check with seller",
+    listingUrl: p.listingUrl,
+    apn: "",
+    notes: p.description,
+    client: client.name,
+    lat: 0,
+    lng: 0,
+    researchDate: new Date().toISOString().split('T')[0],
+    soilQuality: "Check with seller",
+    elevation: "Check with seller",
+  } as Property));
 }
 
 function scoreColor(score: number) {
@@ -218,22 +257,14 @@ function CompareView({ items, client }: { items: Property[]; client: Client }) {
   );
 }
 
-function EmptyResearchState({ client, onResearchComplete }: { client: Client; onResearchComplete?: () => void }) {
-  const engines = loadSearchEngines().filter(e => e.enabled).sort((a, b) => a.priority - b.priority);
-  const criteria = {
-    states: client.notes?.match(/States: ([^\n.]+)/)?.[1]?.split(", ") || ["Missouri"],
-    counties: client.targetCounties,
-    budgetCashMin: client.budgetCashMin,
-    budgetCashMax: client.budgetCashMax,
-    acreageMin: client.acreageMin,
-    acreageMax: client.acreageMax,
-    ownerFinancing: client.mustOwnerFinancing,
-    rvMobileOk: client.mustLiveOnSite,
-    unrestricted: client.mustUnrestricted,
-  };
-  const searchPlan = generateSearchPlan(criteria);
-
-  // Search progress simulation
+function EmptyResearchState({
+  client,
+  onResearchComplete
+}: {
+  client: Client;
+  onResearchComplete: (results: Property[]) => void;
+}) {
+  const realSites = getSearchedSites();
   const [progress, setProgress] = useState(0);
   const [currentStep, setCurrentStep] = useState(0);
   const [phase, setPhase] = useState<"scanning" | "analyzing" | "done">("scanning");
@@ -241,41 +272,166 @@ function EmptyResearchState({ client, onResearchComplete }: { client: Client; on
   const [foundCount, setFoundCount] = useState(0);
 
   useEffect(() => {
-    if (searchPlan.length === 0) return;
-    let step = 0;
-    const totalSteps = searchPlan.length;
-    const interval = setInterval(() => {
-      step++;
-      if (step <= totalSteps) {
-        const pct = Math.round((step / totalSteps) * 80); // scanning = 0-80%
-        setProgress(pct);
-        setCurrentStep(step);
-        setPhase("scanning");
-        const engineName = searchPlan[step - 1]?.engine?.name;
-        if (engineName) {
-          setScannedEngines(prev => prev.includes(engineName) ? prev : [...prev, engineName]);
+    // Extract search criteria from client
+    const clientStates = client.notes?.match(/States: ([^\n.]+)/)?.[1]?.split(", ").map(s => s.trim()) || [];
+    const clientCounties = (client.targetCounties || []).map(c => c.trim());
+
+    // Build query string for streaming API
+    const params = new URLSearchParams();
+    if (clientStates.length > 0) {
+      clientStates.forEach(s => params.append('states', s));
+    }
+    if (clientCounties.length > 0) {
+      clientCounties.forEach(c => params.append('counties', c));
+    }
+    params.append('maxPrice', String(client.budgetCashMax));
+    if (client.acreageMin > 0) params.append('minAcres', String(client.acreageMin));
+    if (client.acreageMax > 0 && client.acreageMax < 100) {
+      params.append('maxAcres', String(client.acreageMax));
+    }
+    if (client.mustOwnerFinancing) params.append('ownerFinancing', 'true');
+
+    const apiUrl = `${API_BASE_URL}/api/search/stream?${params.toString()}`;
+    const apiResults: ScrapedProperty[] = [];
+    let siteCount = 0;
+
+    // Set up a timeout after 30 seconds
+    const timeoutId = setTimeout(() => {
+      eventSource?.close();
+      setPhase("done");
+      setProgress(100);
+      // Fall back to scraped properties if timeout
+      const fallbackResults = searchScrapedProperties({
+        states: clientStates.length > 0 ? clientStates : undefined,
+        counties: clientCounties.length > 0 ? clientCounties : undefined,
+        maxPrice: client.budgetCashMax,
+        minAcres: client.acreageMin > 0 ? client.acreageMin : undefined,
+        maxAcres: client.acreageMax > 0 && client.acreageMax < 100 ? client.acreageMax : undefined,
+        ownerFinancing: client.mustOwnerFinancing || undefined,
+      });
+      const convertedResults = convertScrapedToProperty(fallbackResults, client);
+      onResearchComplete(convertedResults);
+    }, 30000);
+
+    let eventSource: EventSource | null = null;
+
+    try {
+      eventSource = new EventSource(apiUrl);
+
+      eventSource.addEventListener('start', (e) => {
+        const data = JSON.parse(e.data);
+        console.log('API search started', data);
+      });
+
+      eventSource.addEventListener('progress', (e) => {
+        const data = JSON.parse(e.data);
+        setProgress(Math.round(data.progress || 0));
+      });
+
+      eventSource.addEventListener('site_done', (e) => {
+        const data = JSON.parse(e.data);
+        siteCount++;
+        setCurrentStep(siteCount);
+        setScannedEngines(prev =>
+          prev.includes(data.siteName) ? prev : [...prev, data.siteName]
+        );
+        if (data.resultsFound) {
+          setFoundCount(prev => prev + (data.resultsFound || 0));
         }
-        // Simulate finding properties occasionally
-        if (step % 3 === 0) setFoundCount(prev => prev + Math.floor(Math.random() * 3) + 1);
-      } else if (step === totalSteps + 1) {
+      });
+
+      eventSource.addEventListener('site_error', (e) => {
+        const data = JSON.parse(e.data);
+        console.warn(`Site error: ${data.siteName}`, data.error);
+        siteCount++;
+        setCurrentStep(siteCount);
+        // Still mark as processed even if error
+        setScannedEngines(prev =>
+          prev.includes(data.siteName) ? prev : [...prev, data.siteName]
+        );
+      });
+
+      eventSource.addEventListener('done', (e) => {
+        const data = JSON.parse(e.data);
+        clearTimeout(timeoutId);
         setPhase("analyzing");
         setProgress(90);
-      } else if (step === totalSteps + 2) {
-        setProgress(95);
-      } else {
-        setPhase("done");
-        setProgress(100);
-        clearInterval(interval);
-        // Trigger callback when research completes
-        if (onResearchComplete) {
-          onResearchComplete();
-        }
-      }
-    }, 300);
-    return () => clearInterval(interval);
-  }, [searchPlan.length, onResearchComplete]);
 
-  const currentPlan = searchPlan[currentStep - 1];
+        // Convert API results to Property format
+        const convertedResults = convertScrapedToProperty(data.results || apiResults, client);
+
+        // Use API results if available, otherwise fall back to scraped
+        if (data.results && data.results.length > 0) {
+          setPhase("done");
+          setProgress(100);
+          onResearchComplete(convertedResults);
+        } else {
+          // Fall back to scraped properties
+          const fallbackResults = searchScrapedProperties({
+            states: clientStates.length > 0 ? clientStates : undefined,
+            counties: clientCounties.length > 0 ? clientCounties : undefined,
+            maxPrice: client.budgetCashMax,
+            minAcres: client.acreageMin > 0 ? client.acreageMin : undefined,
+            maxAcres: client.acreageMax > 0 && client.acreageMax < 100 ? client.acreageMax : undefined,
+            ownerFinancing: client.mustOwnerFinancing || undefined,
+          });
+          const fallbackConverted = convertScrapedToProperty(fallbackResults, client);
+          setPhase("done");
+          setProgress(100);
+          onResearchComplete(fallbackConverted);
+        }
+      });
+
+      eventSource.onerror = (err) => {
+        console.error('EventSource error:', err);
+        clearTimeout(timeoutId);
+        setPhase("analyzing");
+        eventSource?.close();
+
+        // Fall back to scraped properties
+        setTimeout(() => {
+          const fallbackResults = searchScrapedProperties({
+            states: clientStates.length > 0 ? clientStates : undefined,
+            counties: clientCounties.length > 0 ? clientCounties : undefined,
+            maxPrice: client.budgetCashMax,
+            minAcres: client.acreageMin > 0 ? client.acreageMin : undefined,
+            maxAcres: client.acreageMax > 0 && client.acreageMax < 100 ? client.acreageMax : undefined,
+            ownerFinancing: client.mustOwnerFinancing || undefined,
+          });
+          const convertedResults = convertScrapedToProperty(fallbackResults, client);
+          setPhase("done");
+          setProgress(100);
+          onResearchComplete(convertedResults);
+        }, 500);
+      };
+    } catch (err) {
+      console.error('Error starting API call:', err);
+      clearTimeout(timeoutId);
+
+      // Fall back to scraped properties
+      const fallbackResults = searchScrapedProperties({
+        states: clientStates.length > 0 ? clientStates : undefined,
+        counties: clientCounties.length > 0 ? clientCounties : undefined,
+        maxPrice: client.budgetCashMax,
+        minAcres: client.acreageMin > 0 ? client.acreageMin : undefined,
+        maxAcres: client.acreageMax > 0 && client.acreageMax < 100 ? client.acreageMax : undefined,
+        ownerFinancing: client.mustOwnerFinancing || undefined,
+      });
+      const convertedResults = convertScrapedToProperty(fallbackResults, client);
+      setPhase("done");
+      setProgress(100);
+      onResearchComplete(convertedResults);
+    }
+
+    return () => {
+      clearTimeout(timeoutId);
+      if (eventSource) {
+        eventSource.close();
+      }
+    };
+  }, [client, onResearchComplete]);
+
+  const currentSite = realSites[currentStep - 1];
 
   return (
     <div className="text-center py-8 text-gray-400">
@@ -314,17 +470,16 @@ function EmptyResearchState({ client, onResearchComplete }: { client: Client; on
         {/* Status line */}
         <div className="flex justify-between text-[11px] text-gray-400">
           <span>
-            {phase === "scanning" && currentPlan && (
+            {phase === "scanning" && currentSite && (
               <span className="flex items-center gap-1">
                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
-                Searching <strong className="text-gray-600">{currentPlan.engine.name}</strong>
-                {currentPlan.county ? ` → ${currentPlan.county} Co, ${currentPlan.state}` : ` → ${currentPlan.state}`}
+                Searching <strong className="text-gray-600">{currentSite}</strong>
               </span>
             )}
             {phase === "analyzing" && "Deduplicating & scoring results..."}
-            {phase === "done" && `Scan complete — ${scannedEngines.length} engines checked`}
+            {phase === "done" && `Scan complete — ${scannedEngines.length} sites checked`}
           </span>
-          <span>{currentStep}/{searchPlan.length} searches</span>
+          <span>{currentStep}/{realSites.length} sites</span>
         </div>
       </div>
 
@@ -332,11 +487,11 @@ function EmptyResearchState({ client, onResearchComplete }: { client: Client; on
       <div className="flex items-center justify-center gap-4 text-[11px] mb-4">
         <span className="flex items-center gap-1 text-gray-500">
           <Globe className="w-3.5 h-3.5" />
-          <strong className="text-gray-700">{scannedEngines.length}</strong> engines scanned
+          <strong className="text-gray-700">{scannedEngines.length}</strong> sites scanned
         </span>
         <span className="flex items-center gap-1 text-gray-500">
           <Search className="w-3.5 h-3.5" />
-          <strong className="text-gray-700">{currentStep}</strong> of {searchPlan.length} searches
+          <strong className="text-gray-700">{currentStep}</strong> of {realSites.length} sites
         </span>
         {foundCount > 0 && (
           <span className="flex items-center gap-1 text-emerald-600">
@@ -358,33 +513,34 @@ function EmptyResearchState({ client, onResearchComplete }: { client: Client; on
         <Separator />
         <div>
           <div className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold mb-2">
-            Search Plan — {searchPlan.length} searches across {engines.length} sites
+            Sites Being Searched — {realSites.length} property listing sites
           </div>
           <div className="space-y-1 max-h-48 overflow-y-auto">
-            {searchPlan.slice(0, 20).map((plan, i) => {
+            {realSites.map((site, i) => {
               const isActive = i === currentStep - 1 && phase === "scanning";
               const isDone = i < currentStep;
               return (
-                <a key={i} href={plan.searchUrl} target="_blank" rel="noopener noreferrer"
-                  className={`flex items-center gap-2 p-1.5 rounded transition-colors group ${
-                    isActive ? "bg-blue-50 ring-1 ring-blue-200" : isDone ? "bg-emerald-50/50" : "bg-slate-50 hover:bg-blue-50"
+                <div key={i}
+                  className={`flex items-center gap-2 p-1.5 rounded transition-colors ${
+                    isActive ? "bg-blue-50 ring-1 ring-blue-200" : isDone ? "bg-emerald-50/50" : "bg-slate-50"
                   }`}>
                   {isActive && <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse shrink-0" />}
                   {isDone && !isActive && <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />}
                   {!isActive && !isDone && <span className="w-2 h-2 rounded-full bg-gray-200 shrink-0" />}
                   <Badge variant="outline" className={`text-[9px] min-w-[80px] text-center ${isActive ? "border-blue-300 text-blue-700" : ""}`}>
-                    {plan.engine.name}
+                    {site}
                   </Badge>
                   <span className={`truncate flex-1 ${isActive ? "text-blue-600 font-medium" : "text-gray-500"}`}>
-                    {plan.county ? `${plan.county} Co, ${plan.state}` : plan.state}
+                    {site === "Landmodo" && "Active real estate listings"}
+                    {site === "LandWatch" && "Land listings and auctions"}
+                    {site === "LandSearch" && "Raw land for sale"}
+                    {site === "Land.com" && "Comprehensive land database"}
+                    {site === "LandFlip" && "Wholesale land deals"}
+                    {site === "Zillow" && "Land and real estate"}
                   </span>
-                  <ExternalLink className="w-3 h-3 text-gray-300 group-hover:text-blue-500" />
-                </a>
+                </div>
               );
             })}
-            {searchPlan.length > 20 && (
-              <div className="text-center text-gray-400 text-[10px] py-1">+ {searchPlan.length - 20} more searches</div>
-            )}
           </div>
         </div>
       </div>
@@ -547,48 +703,15 @@ export default function App() {
               {filtered.map(p => <PropertyCard key={p.id} p={p} client={client} compare={compareIds.includes(p.id)} onCompare={toggleCompare} />)}
             </div>
             {filtered.length === 0 && allProperties.filter(p => p.client === activeClient).length === 0 && !localStorage.getItem(`research_results_${activeClient}`) && (
-              <EmptyResearchState client={client} onResearchComplete={() => {
-                // Extract client location criteria
-                const clientStates = client.notes?.match(/States: ([^\n.]+)/)?.[1]?.split(", ").map(s => s.trim().toLowerCase()) || [];
-                const clientCounties = (client.targetCounties || []).map(c => c.trim().toLowerCase());
-
-                // Find properties matching ALL client criteria (state, county, budget, acreage)
-                const matchedProperties = allProperties.filter(p => {
-                  // MUST match state if client specified states
-                  if (clientStates.length > 0 && p.state) {
-                    if (!clientStates.includes(p.state.toLowerCase())) return false;
-                  }
-                  // MUST match county if client specified counties
-                  if (clientCounties.length > 0 && p.county) {
-                    if (!clientCounties.includes(p.county.toLowerCase())) return false;
-                  }
-                  // Budget filter
-                  if (p.cashPrice != null && (p.cashPrice < client.budgetCashMin || p.cashPrice > client.budgetCashMax)) return false;
-                  // Acreage filter
-                  if (p.acres != null && client.acreageMin > 0 && p.acres < client.acreageMin) return false;
-                  if (p.acres != null && client.acreageMax > 0 && client.acreageMax < 100 && p.acres > client.acreageMax) return false;
-                  // Must have a SPECIFIC listing URL (not a general search/seller page)
-                  if (!isSpecificListingUrl(p.listingUrl)) return false;
-                  return true;
-                });
-
-                if (matchedProperties.length === 0) {
-                  // Save empty array so UI shows "no results" instead of re-running animation
-                  try { localStorage.setItem(`research_results_${client.name}`, JSON.stringify([])); } catch {}
+              <EmptyResearchState
+                client={client}
+                onResearchComplete={(results) => {
+                  try {
+                    localStorage.setItem(`research_results_${client.name}`, JSON.stringify(results));
+                  } catch { }
                   setCachedProperties([...loadPropertyCache()]);
-                  return;
-                }
-
-                // Create copies assigned to this client
-                const clientProps = matchedProperties.map((p, idx) => ({
-                  ...p,
-                  id: 9000 + idx,
-                  client: client.name,
-                }));
-                // Save to localStorage and trigger re-render
-                try { localStorage.setItem(`research_results_${client.name}`, JSON.stringify(clientProps)); } catch {}
-                setCachedProperties([...loadPropertyCache()]);
-              }} />
+                }}
+              />
             )}
             {filtered.length === 0 && allProperties.filter(p => p.client === activeClient).length > 0 && <div className="text-center py-12 text-gray-400"><AlertTriangle className="w-8 h-8 mx-auto mb-2" /><p className="text-sm">No properties match current filters. Try adjusting filters above.</p></div>}
             {filtered.length === 0 && allProperties.filter(p => p.client === activeClient).length === 0 && localStorage.getItem(`research_results_${activeClient}`) && (
