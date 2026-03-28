@@ -357,11 +357,20 @@ function EmptyResearchState({
         setPhase("analyzing");
         setProgress(90);
 
+        // Filter API results by acre requirements BEFORE converting
+        let rawResults: ScrapedProperty[] = data.results || apiResults;
+        if (client.acreageMin > 0) {
+          rawResults = rawResults.filter((p: ScrapedProperty) => p.acres != null && p.acres >= client.acreageMin);
+        }
+        if (client.acreageMax > 0 && client.acreageMax < 100) {
+          rawResults = rawResults.filter((p: ScrapedProperty) => p.acres == null || p.acres <= client.acreageMax);
+        }
+
         // Convert API results to Property format
-        const convertedResults = convertScrapedToProperty(data.results || apiResults, client);
+        const convertedResults = convertScrapedToProperty(rawResults, client);
 
         // Use API results if available, otherwise fall back to scraped
-        if (data.results && data.results.length > 0) {
+        if (rawResults.length > 0) {
           setPhase("done");
           setProgress(100);
           onResearchComplete(convertedResults);
@@ -616,6 +625,13 @@ export default function App() {
     if (filterUnrestricted) items = items.filter(p => p.unrestricted);
     if (filterFinancing) items = items.filter(p => p.ownerFinancing);
     items = items.filter(p => p.cashPrice == null || p.cashPrice <= maxPrice);
+    // Enforce client's acreage requirements — NEVER show properties below minimum acres
+    if (client.acreageMin > 0) {
+      items = items.filter(p => p.acres != null && p.acres >= client.acreageMin);
+    }
+    if (client.acreageMax > 0 && client.acreageMax < 100) {
+      items = items.filter(p => p.acres == null || p.acres <= client.acreageMax);
+    }
     items.sort((a, b) => {
       if (sortBy === "score") return wholesaleScore(b, client) - wholesaleScore(a, client);
       if (sortBy === "price") return (a.cashPrice ?? 0) - (b.cashPrice ?? 0);
