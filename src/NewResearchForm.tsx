@@ -107,6 +107,7 @@ interface NewResearchFormProps {
   onSave?: (client: {
     name: string;
     purpose: string;
+    targetStates: string[];
     targetCounties: string[];
     budgetCashMin: number;
     budgetCashMax: number;
@@ -370,6 +371,7 @@ export default function NewResearchForm({ onSave }: NewResearchFormProps) {
           onSave({
             name: form.clientName || `Research ${new Date().toLocaleDateString()}`,
             purpose: landUseLabels.length > 0 ? landUseLabels.join(", ") : "General land research",
+            targetStates: form.states,
             targetCounties: form.counties,
             budgetCashMin: form.budgetCashMin,
             budgetCashMax: form.budgetCashMax,

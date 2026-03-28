@@ -33,6 +33,7 @@ export interface Property {
 export interface Client {
   name: string;
   purpose: string;
+  targetStates: string[];
   targetCounties: string[];
   budgetCashMin: number;
   budgetCashMax: number;
@@ -52,6 +53,7 @@ export const clients: Client[] = [
   {
     name: "Marietta",
     purpose: "RV/Mobile Home, Greenhouse/Nursery, Agriculture",
+    targetStates: ["Missouri"],
     targetCounties: ["Douglas", "Ozark", "Howell"],
     budgetCashMin: 5000,
     budgetCashMax: 15000,
@@ -69,6 +71,7 @@ export const clients: Client[] = [
   {
     name: "Johnatan",
     purpose: "Land wholesale — buy and resell",
+    targetStates: ["Missouri"],
     targetCounties: ["Iron", "Reynolds", "Wayne", "Washington", "Dent"],
     budgetCashMin: 10000,
     budgetCashMax: 40000,

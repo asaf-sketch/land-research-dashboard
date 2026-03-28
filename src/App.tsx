@@ -44,14 +44,35 @@ const COUNTY_COORDS: Record<string, [number, number]> = {
   "Taney": [36.65, -93.02], "Christian": [36.97, -93.19], "Shannon": [37.15, -91.40],
   "Macon": [39.83, -92.47], "Butler": [36.70, -90.40], "Johnson": [38.75, -93.80],
   "Madison": [37.48, -90.33], "Greer": [34.92, -99.58],
+  "Morgan": [38.43, -92.88], "Barry": [36.71, -93.83], "Reynolds": [37.37, -91.07],
+  "Camden": [37.98, -92.77], "Washington": [37.96, -90.88], "Jefferson": [38.26, -90.53],
   // Tennessee counties
   "Benton": [35.95, -88.08], "Fentress": [36.38, -84.93], "Meigs": [35.51, -84.82],
   "Decatur": [35.59, -88.12], "Scott": [36.43, -84.52], "Hawkins": [36.47, -82.95],
   "Henderson": [35.65, -88.38], "Perry": [35.63, -87.87], "Wayne": [35.24, -87.80],
   "Hickman": [35.80, -87.47], "Lewis": [35.52, -87.50], "Lawrence": [35.22, -87.40],
+  "Cumberland": [35.95, -84.98], "Giles": [35.20, -87.03], "DeKalb": [35.98, -85.83],
+  "Hardeman": [35.20, -89.00], "Shelby": [35.18, -89.89],
   // Default
   "Unknown": [35.50, -97.50],
 };
+
+// Cache version — bump this to clear stale localStorage data with old/broken URLs
+const CACHE_VERSION = "v4";
+const storedVersion = localStorage.getItem('cache_version');
+if (storedVersion !== CACHE_VERSION) {
+  // Clear old research results that may contain fabricated/404 URLs
+  const keysToRemove: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && (key.startsWith('research_') || key.startsWith('results_') || key === 'lastResearch' || key === 'researchResults')) {
+      keysToRemove.push(key);
+    }
+  }
+  keysToRemove.forEach(k => localStorage.removeItem(k));
+  localStorage.setItem('cache_version', CACHE_VERSION);
+  console.log('[AADreamland] Cache cleared — old research data with broken URLs removed.');
+}
 
 // API configuration - change this when backend is deployed
 const API_BASE_URL = localStorage.getItem('api_url') || 'https://land-scraper-api.onrender.com';
@@ -83,7 +104,7 @@ function convertScrapedToProperty(scrapedList: ScrapedProperty[], client: Client
     id: 9000 + idx,
     name: p.title,
     county: p.county,
-    state: p.state.substring(0, 2).toUpperCase(),
+    state: p.state,
     location: `${p.zip}`,
     acres: p.acres || null,
     cashPrice: p.price,
@@ -396,7 +417,9 @@ function EmptyResearchState({
 
   useEffect(() => {
     // Extract search criteria from client
-    const clientStates = client.notes?.match(/States: ([^\n.]+)/)?.[1]?.split(", ").map(s => s.trim()) || [];
+    const clientStates = (client.targetStates && client.targetStates.length > 0)
+      ? client.targetStates.map(s => s.trim())
+      : (client.notes?.match(/States: ([^\n.]+)/)?.[1]?.split(", ").map(s => s.trim()) || []);
     const clientCounties = (client.targetCounties || []).map(c => c.trim());
 
     // Build query string for streaming API
@@ -418,7 +441,7 @@ function EmptyResearchState({
     const apiResults: ScrapedProperty[] = [];
     let siteCount = 0;
 
-    // Set up a timeout after 30 seconds
+    // Set up a timeout after 90 seconds (Render free tier cold starts take ~50s)
     const timeoutId = setTimeout(() => {
       eventSource?.close();
       setPhase("done");
@@ -434,7 +457,7 @@ function EmptyResearchState({
       });
       const convertedResults = convertScrapedToProperty(fallbackResults, client);
       onResearchComplete(convertedResults);
-    }, 30000);
+    }, 90000);
 
     let eventSource: EventSource | null = null;
 
@@ -950,6 +973,7 @@ function PropertyDetailView({
 
 export default function App() {
   const [activeClient, setActiveClient] = useState<string>("Marietta");
+  const [filterState, setFilterState] = useState<string>("all");
   const [filterCounty, setFilterCounty] = useState<string>("all");
   const [filterCat, setFilterCat] = useState<string>("all");
   const [filterUnrestricted, setFilterUnrestricted] = useState(false);
@@ -991,7 +1015,10 @@ export default function App() {
       if (researchResults) {
         const parsed = JSON.parse(researchResults);
         for (const rp of parsed) {
-          merged.push(rp);
+          if (!existingIds.has(rp.id)) {
+            merged.push(rp);
+            existingIds.add(rp.id);
+          }
         }
       }
     } catch {}
@@ -1013,6 +1040,7 @@ export default function App() {
 
   const filtered = useMemo(() => {
     let items = allProperties.filter(p => p.client === activeClient);
+    if (filterState !== "all") items = items.filter(p => p.state === filterState);
     if (filterCounty !== "all") items = items.filter(p => p.county === filterCounty);
     if (filterCat !== "all") items = items.filter(p => p.category === filterCat);
     if (filterUnrestricted) items = items.filter(p => p.unrestricted);
@@ -1032,10 +1060,12 @@ export default function App() {
       return 0;
     });
     return items;
-  }, [allProperties, activeClient, filterCounty, filterCat, filterUnrestricted, filterFinancing, maxPrice, sortBy, client]);
+  }, [allProperties, activeClient, filterState, filterCounty, filterCat, filterUnrestricted, filterFinancing, maxPrice, sortBy, client]);
 
   const compareItems = allProperties.filter(p => compareIds.includes(p.id));
-  const counties = [...new Set(allProperties.filter(p => p.client === activeClient).map(p => p.county))];
+  const clientProperties = allProperties.filter(p => p.client === activeClient);
+  const states = [...new Set(clientProperties.map(p => p.state))].sort();
+  const counties = [...new Set(clientProperties.filter(p => filterState === "all" || p.state === filterState).map(p => p.county))].sort();
 
   // @ts-ignore - kept for compare feature
   function toggleCompare(id: number) {
@@ -1105,6 +1135,7 @@ export default function App() {
           {(tab === "results" || tab === "map" || tab === "compare") && (
             <Card className="mb-4 border"><CardContent className="p-3">
               <div className="flex flex-wrap items-end gap-3">
+                {states.length > 1 && <div><Label className="text-[10px] text-gray-500">State</Label><Select value={filterState} onValueChange={v => { setFilterState(v); setFilterCounty("all"); }}><SelectTrigger className="w-36 h-8 text-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All States ({states.length})</SelectItem>{states.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div>}
                 <div><Label className="text-[10px] text-gray-500">County</Label><Select value={filterCounty} onValueChange={setFilterCounty}><SelectTrigger className="w-32 h-8 text-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All Counties</SelectItem>{counties.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select></div>
                 <div><Label className="text-[10px] text-gray-500">Category</Label><Select value={filterCat} onValueChange={setFilterCat}><SelectTrigger className="w-36 h-8 text-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All</SelectItem><SelectItem value="budget_match">Budget Match</SelectItem><SelectItem value="negotiate">Negotiate</SelectItem><SelectItem value="tax_sale">Tax Sale</SelectItem><SelectItem value="over_budget">Over Budget</SelectItem><SelectItem value="too_small">Too Small</SelectItem></SelectContent></Select></div>
                 <div><Label className="text-[10px] text-gray-500">Sort</Label><Select value={sortBy} onValueChange={setSortBy}><SelectTrigger className="w-32 h-8 text-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="score">Score</SelectItem><SelectItem value="price">Price</SelectItem><SelectItem value="acres">Acres</SelectItem></SelectContent></Select></div>
