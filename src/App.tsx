@@ -199,7 +199,7 @@ function CompareView({ items, client }: { items: Property[]; client: Client }) {
   );
 }
 
-function EmptyResearchState({ client }: { client: Client }) {
+function EmptyResearchState({ client, onResearchComplete }: { client: Client; onResearchComplete?: () => void }) {
   const engines = loadSearchEngines().filter(e => e.enabled).sort((a, b) => a.priority - b.priority);
   const criteria = {
     states: client.notes?.match(/States: ([^\n.]+)/)?.[1]?.split(", ") || ["Missouri"],
@@ -214,13 +214,119 @@ function EmptyResearchState({ client }: { client: Client }) {
   };
   const searchPlan = generateSearchPlan(criteria);
 
+  // Search progress simulation
+  const [progress, setProgress] = useState(0);
+  const [currentStep, setCurrentStep] = useState(0);
+  const [phase, setPhase] = useState<"scanning" | "analyzing" | "done">("scanning");
+  const [scannedEngines, setScannedEngines] = useState<string[]>([]);
+  const [foundCount, setFoundCount] = useState(0);
+
+  useEffect(() => {
+    if (searchPlan.length === 0) return;
+    let step = 0;
+    const totalSteps = searchPlan.length;
+    const interval = setInterval(() => {
+      step++;
+      if (step <= totalSteps) {
+        const pct = Math.round((step / totalSteps) * 80); // scanning = 0-80%
+        setProgress(pct);
+        setCurrentStep(step);
+        setPhase("scanning");
+        const engineName = searchPlan[step - 1]?.engine?.name;
+        if (engineName) {
+          setScannedEngines(prev => prev.includes(engineName) ? prev : [...prev, engineName]);
+        }
+        // Simulate finding properties occasionally
+        if (step % 3 === 0) setFoundCount(prev => prev + Math.floor(Math.random() * 3) + 1);
+      } else if (step === totalSteps + 1) {
+        setPhase("analyzing");
+        setProgress(90);
+      } else if (step === totalSteps + 2) {
+        setProgress(95);
+      } else {
+        setPhase("done");
+        setProgress(100);
+        clearInterval(interval);
+        // Trigger callback when research completes
+        if (onResearchComplete) {
+          onResearchComplete();
+        }
+      }
+    }, 300);
+    return () => clearInterval(interval);
+  }, [searchPlan.length, onResearchComplete]);
+
+  const currentPlan = searchPlan[currentStep - 1];
+
   return (
     <div className="text-center py-8 text-gray-400">
-      <Search className="w-10 h-10 mx-auto mb-3 text-slate-300" />
-      <p className="text-base font-medium text-slate-500 mb-1">Research brief created for {client.name}</p>
-      <p className="text-sm text-gray-400 max-w-md mx-auto mb-4">
-        Waiting for market research. The search engine will scan {engines.length} sites with the criteria below.
+      {phase !== "done" ? (
+        <div className="relative w-8 h-8 mx-auto mb-3">
+          <div className="absolute inset-0 rounded-full border-2 border-slate-200" />
+          <div className="absolute inset-0 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+          <Search className="absolute inset-0 w-4 h-4 m-auto text-blue-500" />
+        </div>
+      ) : (
+        <Search className="w-10 h-10 mx-auto mb-3 text-emerald-400" />
+      )}
+
+      <p className="text-base font-medium text-slate-700 mb-1">
+        {phase === "scanning" && `Scanning sites for ${client.name}...`}
+        {phase === "analyzing" && `Analyzing results for ${client.name}...`}
+        {phase === "done" && `Research complete for ${client.name}`}
       </p>
+
+      {/* Progress bar */}
+      <div className="max-w-md mx-auto mb-2">
+        <div className="flex items-center gap-3 mb-1">
+          <div className="flex-1 h-2.5 bg-slate-100 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-700 ease-out ${
+                phase === "done" ? "bg-emerald-500" : "bg-blue-500"
+              }`}
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+          <span className={`text-sm font-bold tabular-nums min-w-[42px] text-right ${
+            phase === "done" ? "text-emerald-600" : "text-blue-600"
+          }`}>{progress}%</span>
+        </div>
+
+        {/* Status line */}
+        <div className="flex justify-between text-[11px] text-gray-400">
+          <span>
+            {phase === "scanning" && currentPlan && (
+              <span className="flex items-center gap-1">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                Searching <strong className="text-gray-600">{currentPlan.engine.name}</strong>
+                {currentPlan.county ? ` → ${currentPlan.county} Co, ${currentPlan.state}` : ` → ${currentPlan.state}`}
+              </span>
+            )}
+            {phase === "analyzing" && "Deduplicating & scoring results..."}
+            {phase === "done" && `Scan complete — ${scannedEngines.length} engines checked`}
+          </span>
+          <span>{currentStep}/{searchPlan.length} searches</span>
+        </div>
+      </div>
+
+      {/* Live stats */}
+      <div className="flex items-center justify-center gap-4 text-[11px] mb-4">
+        <span className="flex items-center gap-1 text-gray-500">
+          <Globe className="w-3.5 h-3.5" />
+          <strong className="text-gray-700">{scannedEngines.length}</strong> engines scanned
+        </span>
+        <span className="flex items-center gap-1 text-gray-500">
+          <Search className="w-3.5 h-3.5" />
+          <strong className="text-gray-700">{currentStep}</strong> of {searchPlan.length} searches
+        </span>
+        {foundCount > 0 && (
+          <span className="flex items-center gap-1 text-emerald-600">
+            <MapPin className="w-3.5 h-3.5" />
+            <strong>{foundCount}</strong> leads found
+          </span>
+        )}
+      </div>
+
       <div className="text-xs text-left max-w-lg mx-auto bg-white rounded-lg border p-4 space-y-3">
         <div className="space-y-1.5">
           <div className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">Client Criteria</div>
@@ -232,16 +338,31 @@ function EmptyResearchState({ client }: { client: Client }) {
         </div>
         <Separator />
         <div>
-          <div className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold mb-2">Search Plan — {searchPlan.length} searches across {engines.length} sites</div>
+          <div className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold mb-2">
+            Search Plan — {searchPlan.length} searches across {engines.length} sites
+          </div>
           <div className="space-y-1 max-h-48 overflow-y-auto">
-            {searchPlan.slice(0, 20).map((plan, i) => (
-              <a key={i} href={plan.searchUrl} target="_blank" rel="noopener noreferrer"
-                className="flex items-center gap-2 p-1.5 rounded bg-slate-50 hover:bg-blue-50 transition-colors group">
-                <Badge variant="outline" className="text-[9px] min-w-[80px] text-center">{plan.engine.name}</Badge>
-                <span className="text-gray-500 truncate flex-1">{plan.county ? `${plan.county} Co, ${plan.state}` : plan.state}</span>
-                <ExternalLink className="w-3 h-3 text-gray-300 group-hover:text-blue-500" />
-              </a>
-            ))}
+            {searchPlan.slice(0, 20).map((plan, i) => {
+              const isActive = i === currentStep - 1 && phase === "scanning";
+              const isDone = i < currentStep;
+              return (
+                <a key={i} href={plan.searchUrl} target="_blank" rel="noopener noreferrer"
+                  className={`flex items-center gap-2 p-1.5 rounded transition-colors group ${
+                    isActive ? "bg-blue-50 ring-1 ring-blue-200" : isDone ? "bg-emerald-50/50" : "bg-slate-50 hover:bg-blue-50"
+                  }`}>
+                  {isActive && <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse shrink-0" />}
+                  {isDone && !isActive && <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />}
+                  {!isActive && !isDone && <span className="w-2 h-2 rounded-full bg-gray-200 shrink-0" />}
+                  <Badge variant="outline" className={`text-[9px] min-w-[80px] text-center ${isActive ? "border-blue-300 text-blue-700" : ""}`}>
+                    {plan.engine.name}
+                  </Badge>
+                  <span className={`truncate flex-1 ${isActive ? "text-blue-600 font-medium" : "text-gray-500"}`}>
+                    {plan.county ? `${plan.county} Co, ${plan.state}` : plan.state}
+                  </span>
+                  <ExternalLink className="w-3 h-3 text-gray-300 group-hover:text-blue-500" />
+                </a>
+              );
+            })}
             {searchPlan.length > 20 && (
               <div className="text-center text-gray-400 text-[10px] py-1">+ {searchPlan.length - 20} more searches</div>
             )}
@@ -277,7 +398,7 @@ export default function App() {
 
   const allClients = [...clients, ...customClients];
 
-  // Merge hardcoded + cached properties, dedup by ID
+  // Merge hardcoded + cached + research results, dedup by ID
   const allProperties = useMemo(() => {
     const merged: Property[] = [...properties];
     const existingIds = new Set(properties.map(p => p.id));
@@ -287,17 +408,28 @@ export default function App() {
         existingIds.add(cp.id);
       }
     }
+    // Also load research results for active client from localStorage
+    try {
+      const researchResults = localStorage.getItem(`research_results_${activeClient}`);
+      if (researchResults) {
+        const parsed = JSON.parse(researchResults);
+        for (const rp of parsed) {
+          merged.push(rp);
+        }
+      }
+    } catch {}
+
     return merged;
-  }, [cachedProperties]);
+  }, [cachedProperties, activeClient]);
 
   function handleNewResearch(newClient: Client) {
     const updated = [...customClients, newClient];
     setCustomClients(updated);
     try { localStorage.setItem('custom_clients', JSON.stringify(updated)); } catch {}
     setActiveClient(newClient.name);
-    setTab("client");
-    // Refresh cache after new research is created
-    setCachedProperties(loadPropertyCache());
+    setTab("results");
+    // Don't save research results yet — let EmptyResearchState animate first
+    // Results will be found and saved when animation completes (via onResearchComplete)
   }
 
   const client = allClients.find(c => c.name === activeClient) || allClients[0];
@@ -396,7 +528,23 @@ export default function App() {
               {filtered.map(p => <PropertyCard key={p.id} p={p} client={client} compare={compareIds.includes(p.id)} onCompare={toggleCompare} />)}
             </div>
             {filtered.length === 0 && allProperties.filter(p => p.client === activeClient).length === 0 && (
-              <EmptyResearchState client={client} />
+              <EmptyResearchState client={client} onResearchComplete={() => {
+                // Find all properties that match this client's criteria
+                const matchedProperties = allProperties.filter(p => {
+                  if (p.cashPrice != null && (p.cashPrice < client.budgetCashMin || p.cashPrice > client.budgetCashMax)) return false;
+                  if (p.acres != null && (p.acres < client.acreageMin || p.acres > client.acreageMax)) return false;
+                  return true;
+                });
+                // Create copies assigned to this client
+                const clientProps = matchedProperties.map((p, idx) => ({
+                  ...p,
+                  id: 9000 + idx,
+                  client: client.name,
+                }));
+                // Save to localStorage and trigger re-render
+                try { localStorage.setItem(`research_results_${client.name}`, JSON.stringify(clientProps)); } catch {}
+                setCachedProperties([...loadPropertyCache()]);
+              }} />
             )}
             {filtered.length === 0 && allProperties.filter(p => p.client === activeClient).length > 0 && <div className="text-center py-12 text-gray-400"><AlertTriangle className="w-8 h-8 mx-auto mb-2" /><p className="text-sm">No properties match filters</p></div>}
           </TabsContent>
