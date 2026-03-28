@@ -22,6 +22,26 @@ import SearchEngineSettings from "./components/SearchEngineSettings";
 import { loadPropertyCache, type CachedProperty } from "./data/propertyCache";
 import { loadSearchEngines, generateSearchPlan } from "./data/searchEngines";
 
+// Check if a listing URL points to a SPECIFIC property page (not a general search/seller page)
+function isSpecificListingUrl(url: string): boolean {
+  if (!url || url.trim() === '') return false;
+  const lower = url.toLowerCase();
+  // Specific listing patterns: URLs with property IDs or specific addresses
+  if (lower.includes('/properties/') && /\/properties\/\d+/.test(lower)) return true; // Landmodo, etc.
+  if (lower.includes('/listing/')) return true;
+  if (lower.includes('/property/')) return true;
+  if (lower.includes('/lot/')) return true;
+  if (lower.includes('/land-for-sale/') && /\d{3,}/.test(lower)) return true; // LandWatch with ID
+  // Tax sale pages are valid specific sources
+  if (lower.includes('taxsale')) return true;
+  // Generic patterns that are NOT specific listings:
+  if (lower.match(/^https?:\/\/[^/]+\/?$/) ) return false; // Just a domain
+  if (lower.endsWith('/properties/') || lower.endsWith('/properties')) return false;
+  if (lower.endsWith('/land-for-sale') || lower.includes('/land-for-sale/') && !(/\d{3,}/.test(lower))) return false;
+  if (lower.includes('/collections/')) return false;
+  return false; // Default: not specific enough
+}
+
 function scoreColor(score: number) {
   if (score >= 90) return "bg-emerald-600 text-white";
   if (score >= 70) return "bg-emerald-500 text-white";
@@ -527,14 +547,39 @@ export default function App() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {filtered.map(p => <PropertyCard key={p.id} p={p} client={client} compare={compareIds.includes(p.id)} onCompare={toggleCompare} />)}
             </div>
-            {filtered.length === 0 && allProperties.filter(p => p.client === activeClient).length === 0 && (
+            {filtered.length === 0 && allProperties.filter(p => p.client === activeClient).length === 0 && !localStorage.getItem(`research_results_${activeClient}`) && (
               <EmptyResearchState client={client} onResearchComplete={() => {
-                // Find all properties that match this client's criteria
+                // Extract client location criteria
+                const clientStates = client.notes?.match(/States: ([^\n.]+)/)?.[1]?.split(", ").map(s => s.trim().toLowerCase()) || [];
+                const clientCounties = (client.targetCounties || []).map(c => c.trim().toLowerCase());
+
+                // Find properties matching ALL client criteria (state, county, budget, acreage)
                 const matchedProperties = allProperties.filter(p => {
+                  // MUST match state if client specified states
+                  if (clientStates.length > 0 && p.state) {
+                    if (!clientStates.includes(p.state.toLowerCase())) return false;
+                  }
+                  // MUST match county if client specified counties
+                  if (clientCounties.length > 0 && p.county) {
+                    if (!clientCounties.includes(p.county.toLowerCase())) return false;
+                  }
+                  // Budget filter
                   if (p.cashPrice != null && (p.cashPrice < client.budgetCashMin || p.cashPrice > client.budgetCashMax)) return false;
-                  if (p.acres != null && (p.acres < client.acreageMin || p.acres > client.acreageMax)) return false;
+                  // Acreage filter
+                  if (p.acres != null && client.acreageMin > 0 && p.acres < client.acreageMin) return false;
+                  if (p.acres != null && client.acreageMax > 0 && client.acreageMax < 100 && p.acres > client.acreageMax) return false;
+                  // Must have a SPECIFIC listing URL (not a general search/seller page)
+                  if (!isSpecificListingUrl(p.listingUrl)) return false;
                   return true;
                 });
+
+                if (matchedProperties.length === 0) {
+                  // Save empty array so UI shows "no results" instead of re-running animation
+                  try { localStorage.setItem(`research_results_${client.name}`, JSON.stringify([])); } catch {}
+                  setCachedProperties([...loadPropertyCache()]);
+                  return;
+                }
+
                 // Create copies assigned to this client
                 const clientProps = matchedProperties.map((p, idx) => ({
                   ...p,
@@ -546,7 +591,15 @@ export default function App() {
                 setCachedProperties([...loadPropertyCache()]);
               }} />
             )}
-            {filtered.length === 0 && allProperties.filter(p => p.client === activeClient).length > 0 && <div className="text-center py-12 text-gray-400"><AlertTriangle className="w-8 h-8 mx-auto mb-2" /><p className="text-sm">No properties match filters</p></div>}
+            {filtered.length === 0 && allProperties.filter(p => p.client === activeClient).length > 0 && <div className="text-center py-12 text-gray-400"><AlertTriangle className="w-8 h-8 mx-auto mb-2" /><p className="text-sm">No properties match current filters. Try adjusting filters above.</p></div>}
+            {filtered.length === 0 && allProperties.filter(p => p.client === activeClient).length === 0 && localStorage.getItem(`research_results_${activeClient}`) && (
+              <div className="text-center py-12 text-gray-400">
+                <Search className="w-8 h-8 mx-auto mb-2" />
+                <p className="text-sm font-medium text-slate-600 mb-1">No properties found matching your criteria.</p>
+                <p className="text-xs text-gray-400">Research completed — no verified listings matched the location, budget, and acreage requirements.</p>
+                <p className="text-xs text-gray-400 mt-1">Try expanding your search area, adjusting budget, or checking different states/counties.</p>
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="map">
