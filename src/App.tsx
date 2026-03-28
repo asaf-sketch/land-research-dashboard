@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { properties, clients, countyData } from "./data/properties";
 import type { Property, Client } from "./data/properties";
 import { searchScrapedProperties, getSearchedSites, type ScrapedProperty } from "./data/scrapedProperties";
@@ -20,6 +20,29 @@ import {
 import NewResearchForm from "./NewResearchForm";
 import SearchEngineSettings from "./components/SearchEngineSettings";
 import { loadPropertyCache, type CachedProperty } from "./data/propertyCache";
+
+// @ts-ignore
+const L = window.L;
+
+// Oklahoma county center coordinates for map pins
+const COUNTY_COORDS: Record<string, [number, number]> = {
+  "Osage": [36.63, -96.39], "Cleveland": [35.20, -97.33], "Delaware": [36.40, -94.80],
+  "Pawnee": [36.34, -96.80], "Tulsa": [36.15, -95.99], "Cherokee": [35.90, -94.99],
+  "Wagoner": [35.96, -95.52], "Le Flore": [34.88, -94.68], "Atoka": [34.38, -96.02],
+  "Pittsburg": [34.92, -95.76], "Creek": [35.90, -96.37], "McCurtain": [34.23, -94.77],
+  "Pushmataha": [34.42, -95.37], "Muskogee": [35.62, -95.37], "Adair": [35.88, -94.66],
+  "McIntosh": [35.37, -95.67], "Hughes": [35.05, -96.25], "Sequoyah": [35.50, -94.75],
+  "Latimer": [34.88, -95.25], "Ottawa": [36.84, -94.81], "Coal": [34.58, -96.30],
+  "Lincoln": [35.70, -96.88], "Okmulgee": [35.63, -96.00], "Mayes": [36.30, -95.23],
+  "Pontotoc": [34.73, -96.68], "Haskell": [35.22, -95.11], "Choctaw": [34.03, -95.55],
+  "Craig": [36.76, -95.21], "Rogers": [36.37, -95.60], "Bryan": [33.96, -96.25],
+  "Kiowa": [34.92, -98.98], "Okfuskee": [35.46, -96.32], "Seminole": [35.17, -96.67],
+  // Missouri counties
+  "Douglas": [36.93, -92.50], "Ozark": [36.65, -92.44], "St. Clair": [38.05, -93.77],
+  "Taney": [36.65, -93.02], "Christian": [36.97, -93.19], "Shannon": [37.15, -91.40],
+  // Default
+  "Unknown": [35.50, -97.50],
+};
 
 // API configuration - change this when backend is deployed
 const API_BASE_URL = localStorage.getItem('api_url') || 'https://land-scraper-api.onrender.com';
@@ -120,6 +143,7 @@ function wholesaleScore(p: Property, c: Client): number {
   return Math.min(100, s);
 }
 
+// @ts-ignore - kept for potential future card view
 function PropertyCard({ p, client, compare, onCompare }: { p: Property; client: Client; compare: boolean; onCompare: (id: number) => void }) {
   const style = catStyle(p.category);
   const score = wholesaleScore(p, client);
@@ -188,40 +212,129 @@ function PropertyCard({ p, client, compare, onCompare }: { p: Property; client: 
   );
 }
 
-function SimpleMap({ items }: { items: Property[] }) {
-  if (items.length === 0) return null;
-  const minLat = Math.min(...items.map(p => p.lat)) - 0.3;
-  const maxLat = Math.max(...items.map(p => p.lat)) + 0.3;
-  const minLng = Math.min(...items.map(p => p.lng)) - 0.3;
-  const maxLng = Math.max(...items.map(p => p.lng)) + 0.3;
-  const toX = (lng: number) => ((lng - minLng) / (maxLng - minLng)) * 100;
-  const toY = (lat: number) => (1 - (lat - minLat) / (maxLat - minLat)) * 100;
+function getCoords(p: Property): [number, number] {
+  // Use property lat/lng if available, otherwise use county center + random offset
+  if (p.lat && p.lng && p.lat !== 0 && p.lng !== 0) return [p.lat, p.lng];
+  const base = COUNTY_COORDS[p.county] || COUNTY_COORDS["Unknown"];
+  // Add small deterministic offset based on property id so pins don't overlap
+  const offset = ((p.id * 137) % 100) / 1000;
+  const offset2 = ((p.id * 251) % 100) / 1000;
+  return [base[0] + offset - 0.05, base[1] + offset2 - 0.05];
+}
 
-  return (
-    <div className="relative w-full bg-gradient-to-b from-slate-100 to-slate-200 rounded-lg border overflow-hidden" style={{ height: 360 }}>
-      <div className="absolute inset-0 opacity-10">
-        {[...Array(10)].map((_, i) => <div key={`h${i}`} className="absolute border-b border-slate-400" style={{ top: `${i * 10}%`, width: "100%" }} />)}
-        {[...Array(10)].map((_, i) => <div key={`v${i}`} className="absolute border-r border-slate-400" style={{ left: `${i * 10}%`, height: "100%" }} />)}
-      </div>
-      <div className="absolute top-2 left-2 text-[10px] text-gray-400 font-mono">MO / AR Border Region</div>
-      {items.map(p => (
-        <div key={p.id} className="absolute transform -translate-x-1/2 -translate-y-1/2 z-10 group cursor-pointer" style={{ left: `${toX(p.lng)}%`, top: `${toY(p.lat)}%` }}>
-          <div className={`w-6 h-6 rounded-full border-2 border-white shadow-md flex items-center justify-center text-[9px] font-bold
-            ${p.category === "tax_sale" ? "bg-indigo-500 text-white" : p.category === "negotiate" ? "bg-blue-500 text-white" :
-              p.category === "budget_match" ? "bg-emerald-500 text-white" : p.category === "over_budget" ? "bg-orange-500 text-white" : "bg-gray-400 text-white"}`}>
-            {p.id}
-          </div>
-          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block z-20 bg-gray-900 text-white text-[10px] rounded px-2 py-1 whitespace-nowrap shadow-lg">
-            {p.name}<br />{p.cashPrice ? fmt(p.cashPrice) : "Auction"} {p.acres ? `| ${p.acres}ac` : ""} | {p.county} Co
-          </div>
+function catColor(cat: string): string {
+  switch (cat) {
+    case "budget_match": return "#059669";
+    case "negotiate": return "#2563eb";
+    case "tax_sale": return "#6366f1";
+    case "over_budget": return "#f97316";
+    default: return "#6b7280";
+  }
+}
+
+function LeafletMap({ items, highlightId, onSelect }: { items: Property[]; highlightId: number | null; onSelect: (id: number) => void }) {
+  const mapRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<any>(null);
+  const markersRef = useRef<any[]>([]);
+
+  useEffect(() => {
+    if (!mapRef.current || !L) return;
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.remove();
+    }
+    const center: [number, number] = items.length > 0
+      ? [items.reduce((s, p) => s + getCoords(p)[0], 0) / items.length,
+         items.reduce((s, p) => s + getCoords(p)[1], 0) / items.length]
+      : [35.5, -97.5];
+    const map = L.map(mapRef.current, { scrollWheelZoom: true }).setView(center, 7);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap',
+      maxZoom: 18,
+    }).addTo(map);
+    mapInstanceRef.current = map;
+
+    // Add markers
+    markersRef.current = items.map(p => {
+      const coords = getCoords(p);
+      const color = catColor(p.category);
+      const icon = L.divIcon({
+        className: '',
+        html: `<div style="width:24px;height:24px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;color:white;font-size:9px;font-weight:bold;cursor:pointer;${p.id === highlightId ? 'transform:scale(1.4);z-index:999;' : ''}">${p.acres || '?'}</div>`,
+        iconSize: [24, 24],
+        iconAnchor: [12, 12],
+      });
+      const marker = L.marker(coords, { icon }).addTo(map);
+      marker.bindPopup(`
+        <div style="min-width:180px;font-family:system-ui;font-size:12px">
+          <strong style="font-size:13px">${p.name}</strong><br/>
+          <span style="color:#059669;font-weight:bold">${p.cashPrice ? '$' + p.cashPrice.toLocaleString() : 'Auction'}</span>
+          ${p.acres ? ` · ${p.acres} ac` : ''}
+          ${p.pricePerAcre ? ` · $${p.pricePerAcre.toLocaleString()}/ac` : ''}<br/>
+          <span style="color:#666">${p.county} Co, ${p.state}</span><br/>
+          ${p.listingUrl ? `<a href="${p.listingUrl}" target="_blank" style="color:#2563eb;text-decoration:underline">View Listing →</a>` : ''}
         </div>
-      ))}
-      <div className="absolute bottom-2 right-2 flex flex-col gap-1 bg-white/80 rounded p-1.5">
-        {[{ c: "bg-indigo-500", l: "Tax Sale" }, { c: "bg-blue-500", l: "Negotiate" }, { c: "bg-emerald-500", l: "Budget Match" }, { c: "bg-orange-500", l: "Over Budget" }, { c: "bg-gray-400", l: "Too Small" }].map(x => (
-          <div key={x.l} className="flex items-center gap-1 text-[9px] text-gray-600"><div className={`w-2.5 h-2.5 rounded-full ${x.c}`} />{x.l}</div>
-        ))}
-      </div>
-    </div>
+      `);
+      marker.on('click', () => onSelect(p.id));
+      return marker;
+    });
+
+    if (items.length > 0) {
+      const bounds = L.latLngBounds(items.map(p => getCoords(p)));
+      map.fitBounds(bounds.pad(0.15));
+    }
+
+    return () => {
+      map.remove();
+      mapInstanceRef.current = null;
+    };
+  }, [items, highlightId]);
+
+  return <div ref={mapRef} className="w-full h-full rounded-lg" style={{ minHeight: 400 }} />;
+}
+
+// Table row for a single property
+function PropertyTableRow({ p, client, isHighlighted, onHover }: {
+  p: Property; client: Client; isHighlighted: boolean; onHover: (id: number | null) => void;
+}) {
+  const style = catStyle(p.category);
+  const score = wholesaleScore(p, client);
+  return (
+    <TableRow
+      className={`cursor-pointer transition-colors text-xs ${isHighlighted ? 'bg-blue-50 ring-1 ring-blue-300' : 'hover:bg-slate-50'}`}
+      onMouseEnter={() => onHover(p.id)}
+      onMouseLeave={() => onHover(null)}
+    >
+      <TableCell className="py-2 px-2">
+        <div className={`${scoreColor(score)} rounded px-1.5 py-0.5 text-[10px] font-bold text-center w-8`}>{score}</div>
+      </TableCell>
+      <TableCell className="py-2 px-2 max-w-[200px]">
+        <div className="font-medium text-xs leading-tight truncate" title={p.name}>{p.name}</div>
+        <div className="text-[10px] text-gray-400 mt-0.5">{p.county} Co, {p.state}</div>
+      </TableCell>
+      <TableCell className="py-2 px-2 font-medium tabular-nums">{p.cashPrice ? fmt(p.cashPrice) : "—"}</TableCell>
+      <TableCell className="py-2 px-2 tabular-nums">{p.acres ?? "—"}</TableCell>
+      <TableCell className="py-2 px-2 tabular-nums text-gray-500">{p.pricePerAcre ? fmt(p.pricePerAcre) : "—"}</TableCell>
+      <TableCell className="py-2 px-2">
+        <Badge variant="outline" className={`text-[9px] ${style.badge}`}>{style.label}</Badge>
+      </TableCell>
+      <TableCell className="py-2 px-2">
+        <div className="flex gap-1">
+          {p.ownerFinancing && <Badge variant="outline" className="text-[9px] bg-purple-50 text-purple-700 border-purple-300">Finance</Badge>}
+          {p.unrestricted && <Badge variant="outline" className="text-[9px] bg-green-50 text-green-700 border-green-300">Unrest.</Badge>}
+        </div>
+      </TableCell>
+      <TableCell className="py-2 px-2 text-[10px] text-gray-500">{p.seller}</TableCell>
+      <TableCell className="py-2 px-2">
+        {p.listingUrl ? (
+          <a href={p.listingUrl} target="_blank" rel="noopener noreferrer"
+            className="text-blue-600 hover:text-blue-800 flex items-center gap-0.5"
+            title={p.listingUrl}
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+          </a>
+        ) : <span className="text-gray-300">—</span>}
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -567,6 +680,7 @@ export default function App() {
   const [maxPrice, setMaxPrice] = useState<number>(50000);
   const [sortBy, setSortBy] = useState<string>("score");
   const [compareIds, setCompareIds] = useState<number[]>([]);
+  const [highlightId, setHighlightId] = useState<number | null>(null);
   const [tab, setTab] = useState("results");
   const [customClients, setCustomClients] = useState<Client[]>(() => {
     try {
@@ -645,6 +759,7 @@ export default function App() {
   const compareItems = allProperties.filter(p => compareIds.includes(p.id));
   const counties = [...new Set(allProperties.filter(p => p.client === activeClient).map(p => p.county))];
 
+  // @ts-ignore - kept for compare feature
   function toggleCompare(id: number) {
     setCompareIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   }
@@ -663,7 +778,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="bg-white border-b sticky top-0 z-30">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div className="max-w-[1600px] mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="bg-slate-900 rounded-lg p-1.5"><Landmark className="w-5 h-5 text-white" /></div>
             <div><h1 className="text-base font-bold text-slate-900 leading-none">AADreamland Market Research</h1><p className="text-[10px] text-slate-400 mt-0.5">Wholesale Market Intelligence</p></div>
@@ -678,7 +793,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 py-4">
+      <main className="max-w-[1600px] mx-auto px-4 py-4">
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4">
           {[
             { label: "Total Leads", value: stats.total, icon: BarChart3, color: "text-slate-700" },
@@ -693,15 +808,15 @@ export default function App() {
 
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="mb-4">
-            <TabsTrigger value="results"><Home className="w-3.5 h-3.5 mr-1.5" />Results</TabsTrigger>
-            <TabsTrigger value="map"><MapPin className="w-3.5 h-3.5 mr-1.5" />Map</TabsTrigger>
+            <TabsTrigger value="results"><Home className="w-3.5 h-3.5 mr-1.5" />Results & Map</TabsTrigger>
+            <TabsTrigger value="map"><MapPin className="w-3.5 h-3.5 mr-1.5" />Full Map</TabsTrigger>
             <TabsTrigger value="compare"><Scale className="w-3.5 h-3.5 mr-1.5" />Compare{compareIds.length > 0 && ` (${compareIds.length})`}</TabsTrigger>
             <TabsTrigger value="counties"><Tractor className="w-3.5 h-3.5 mr-1.5" />Counties</TabsTrigger>
             <TabsTrigger value="client"><Filter className="w-3.5 h-3.5 mr-1.5" />Client</TabsTrigger>
             <TabsTrigger value="engines"><Globe className="w-3.5 h-3.5 mr-1.5" />Search Engines</TabsTrigger>
           </TabsList>
 
-          {(tab === "results" || tab === "map") && (
+          {(tab === "results" || tab === "map" || tab === "compare") && (
             <Card className="mb-4 border"><CardContent className="p-3">
               <div className="flex flex-wrap items-end gap-3">
                 <div><Label className="text-[10px] text-gray-500">County</Label><Select value={filterCounty} onValueChange={setFilterCounty}><SelectTrigger className="w-32 h-8 text-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All Counties</SelectItem>{counties.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select></div>
@@ -716,43 +831,64 @@ export default function App() {
           )}
 
           <TabsContent value="results">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {filtered.map(p => <PropertyCard key={p.id} p={p} client={client} compare={compareIds.includes(p.id)} onCompare={toggleCompare} />)}
-            </div>
-            {filtered.length === 0 && allProperties.filter(p => p.client === activeClient).length === 0 && !localStorage.getItem(`research_results_${activeClient}`) && (
-              <EmptyResearchState
-                client={client}
-                onResearchComplete={(results) => {
-                  try {
-                    localStorage.setItem(`research_results_${client.name}`, JSON.stringify(results));
-                  } catch { }
-                  setCachedProperties([...loadPropertyCache()]);
-                }}
-              />
-            )}
-            {filtered.length === 0 && allProperties.filter(p => p.client === activeClient).length > 0 && <div className="text-center py-12 text-gray-400"><AlertTriangle className="w-8 h-8 mx-auto mb-2" /><p className="text-sm">No properties match current filters. Try adjusting filters above.</p></div>}
-            {filtered.length === 0 && allProperties.filter(p => p.client === activeClient).length === 0 && localStorage.getItem(`research_results_${activeClient}`) && (
-              <div className="text-center py-12 text-gray-400">
-                <Search className="w-8 h-8 mx-auto mb-2" />
-                <p className="text-sm font-medium text-slate-600 mb-1">No properties found matching your criteria.</p>
-                <p className="text-xs text-gray-400">Research completed — no verified listings matched the location, budget, and acreage requirements.</p>
-                <p className="text-xs text-gray-400 mt-1">Try expanding your search area, adjusting budget, or checking different states/counties.</p>
+            {filtered.length > 0 ? (
+              <div className="flex gap-4" style={{ height: 'calc(100vh - 280px)', minHeight: 500 }}>
+                {/* Left: Property Table */}
+                <div className="flex-1 overflow-auto border rounded-lg bg-white">
+                  <Table>
+                    <TableHeader className="sticky top-0 bg-white z-10 shadow-sm">
+                      <TableRow>
+                        <TableHead className="text-[10px] w-12 px-2">Score</TableHead>
+                        <TableHead className="text-[10px] px-2">Property</TableHead>
+                        <TableHead className="text-[10px] px-2">Price</TableHead>
+                        <TableHead className="text-[10px] px-2">Acres</TableHead>
+                        <TableHead className="text-[10px] px-2">$/Acre</TableHead>
+                        <TableHead className="text-[10px] px-2">Status</TableHead>
+                        <TableHead className="text-[10px] px-2">Tags</TableHead>
+                        <TableHead className="text-[10px] px-2">Source</TableHead>
+                        <TableHead className="text-[10px] px-2 w-10">Link</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filtered.map(p => (
+                        <PropertyTableRow key={p.id} p={p} client={client} isHighlighted={p.id === highlightId} onHover={setHighlightId} />
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                {/* Right: Map */}
+                <div className="w-[45%] min-w-[350px] border rounded-lg overflow-hidden shrink-0">
+                  <LeafletMap items={filtered} highlightId={highlightId} onSelect={(id) => setHighlightId(id)} />
+                </div>
               </div>
+            ) : (
+              <>
+                {allProperties.filter(p => p.client === activeClient).length === 0 && !localStorage.getItem(`research_results_${activeClient}`) && (
+                  <EmptyResearchState
+                    client={client}
+                    onResearchComplete={(results) => {
+                      try {
+                        localStorage.setItem(`research_results_${client.name}`, JSON.stringify(results));
+                      } catch { }
+                      setCachedProperties([...loadPropertyCache()]);
+                    }}
+                  />
+                )}
+                {allProperties.filter(p => p.client === activeClient).length > 0 && <div className="text-center py-12 text-gray-400"><AlertTriangle className="w-8 h-8 mx-auto mb-2" /><p className="text-sm">No properties match current filters. Try adjusting filters above.</p></div>}
+                {allProperties.filter(p => p.client === activeClient).length === 0 && localStorage.getItem(`research_results_${activeClient}`) && (
+                  <div className="text-center py-12 text-gray-400">
+                    <Search className="w-8 h-8 mx-auto mb-2" />
+                    <p className="text-sm font-medium text-slate-600 mb-1">No properties found matching your criteria.</p>
+                    <p className="text-xs text-gray-400 mt-1">Try expanding your search area, adjusting budget, or checking different states/counties.</p>
+                  </div>
+                )}
+              </>
             )}
           </TabsContent>
 
           <TabsContent value="map">
-            <SimpleMap items={filtered} />
-            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {filtered.map(p => (
-                <div key={p.id} className="flex items-center gap-2 text-xs bg-white rounded border p-2">
-                  <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0
-                    ${p.category === "tax_sale" ? "bg-indigo-500" : p.category === "negotiate" ? "bg-blue-500" : p.category === "budget_match" ? "bg-emerald-500" : p.category === "over_budget" ? "bg-orange-500" : "bg-gray-400"}`}>{p.id}</div>
-                  <span className="font-medium truncate flex-1">{p.name}</span>
-                  <span className="text-gray-500">{p.county}</span>
-                  <span className="font-medium">{p.cashPrice ? fmt(p.cashPrice) : "Auction"}</span>
-                </div>
-              ))}
+            <div style={{ height: 'calc(100vh - 240px)', minHeight: 500 }}>
+              <LeafletMap items={filtered} highlightId={highlightId} onSelect={(id) => setHighlightId(id)} />
             </div>
           </TabsContent>
 
