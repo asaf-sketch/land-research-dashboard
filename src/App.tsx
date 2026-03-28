@@ -366,29 +366,30 @@ function EmptyResearchState({
           rawResults = rawResults.filter((p: ScrapedProperty) => p.acres == null || p.acres <= client.acreageMax);
         }
 
-        // Convert API results to Property format
-        const convertedResults = convertScrapedToProperty(rawResults, client);
+        // ALWAYS merge API results with static fallback data for maximum coverage
+        const fallbackResults = searchScrapedProperties({
+          states: clientStates.length > 0 ? clientStates : undefined,
+          counties: clientCounties.length > 0 ? clientCounties : undefined,
+          maxPrice: client.budgetCashMax,
+          minAcres: client.acreageMin > 0 ? client.acreageMin : undefined,
+          maxAcres: client.acreageMax > 0 && client.acreageMax < 100 ? client.acreageMax : undefined,
+          ownerFinancing: client.mustOwnerFinancing || undefined,
+        });
 
-        // Use API results if available, otherwise fall back to scraped
-        if (rawResults.length > 0) {
-          setPhase("done");
-          setProgress(100);
-          onResearchComplete(convertedResults);
-        } else {
-          // Fall back to scraped properties
-          const fallbackResults = searchScrapedProperties({
-            states: clientStates.length > 0 ? clientStates : undefined,
-            counties: clientCounties.length > 0 ? clientCounties : undefined,
-            maxPrice: client.budgetCashMax,
-            minAcres: client.acreageMin > 0 ? client.acreageMin : undefined,
-            maxAcres: client.acreageMax > 0 && client.acreageMax < 100 ? client.acreageMax : undefined,
-            ownerFinancing: client.mustOwnerFinancing || undefined,
-          });
-          const fallbackConverted = convertScrapedToProperty(fallbackResults, client);
-          setPhase("done");
-          setProgress(100);
-          onResearchComplete(fallbackConverted);
+        // Merge and deduplicate by title similarity
+        const allScraped = [...rawResults];
+        const existingTitles = new Set(rawResults.map((p: ScrapedProperty) => p.title.toLowerCase().substring(0, 30)));
+        for (const fb of fallbackResults) {
+          if (!existingTitles.has(fb.title.toLowerCase().substring(0, 30))) {
+            allScraped.push(fb);
+            existingTitles.add(fb.title.toLowerCase().substring(0, 30));
+          }
         }
+
+        const convertedResults = convertScrapedToProperty(allScraped, client);
+        setPhase("done");
+        setProgress(100);
+        onResearchComplete(convertedResults);
       });
 
       eventSource.onerror = (err) => {
