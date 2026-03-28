@@ -11,7 +11,6 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Slider } from "@/components/ui/slider";
 import {
   MapPin, DollarSign, Star, ArrowUpDown, Filter, BarChart3,
   Scale, Home, Landmark, Tractor, AlertTriangle, ExternalLink, Search,
@@ -535,7 +534,7 @@ export default function App() {
                 <div><Label className="text-[10px] text-gray-500">County</Label><Select value={filterCounty} onValueChange={setFilterCounty}><SelectTrigger className="w-32 h-8 text-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All Counties</SelectItem>{counties.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select></div>
                 <div><Label className="text-[10px] text-gray-500">Category</Label><Select value={filterCat} onValueChange={setFilterCat}><SelectTrigger className="w-36 h-8 text-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All</SelectItem><SelectItem value="budget_match">Budget Match</SelectItem><SelectItem value="negotiate">Negotiate</SelectItem><SelectItem value="tax_sale">Tax Sale</SelectItem><SelectItem value="over_budget">Over Budget</SelectItem><SelectItem value="too_small">Too Small</SelectItem></SelectContent></Select></div>
                 <div><Label className="text-[10px] text-gray-500">Sort</Label><Select value={sortBy} onValueChange={setSortBy}><SelectTrigger className="w-32 h-8 text-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="score">Score</SelectItem><SelectItem value="price">Price</SelectItem><SelectItem value="acres">Acres</SelectItem></SelectContent></Select></div>
-                <div className="flex items-center gap-2"><Label className="text-[10px] text-gray-500">Max Price</Label><div className="w-28"><Slider value={[maxPrice]} min={0} max={50000} step={1000} onValueChange={v => setMaxPrice(v[0])} /></div><span className="text-xs font-mono">{fmt(maxPrice)}</span></div>
+                <div className="flex items-center gap-2"><Label className="text-[10px] text-gray-500">Max Price</Label><div className="relative"><span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">$</span><input type="number" value={maxPrice} min={0} max={100000} step={1000} onChange={e => setMaxPrice(Number(e.target.value) || 0)} className="w-24 h-7 pl-5 pr-2 text-xs border rounded-md font-mono" /></div></div>
                 <div className="flex items-center gap-2"><Switch checked={filterUnrestricted} onCheckedChange={setFilterUnrestricted} /><Label className="text-xs">Unrestricted</Label></div>
                 <div className="flex items-center gap-2"><Switch checked={filterFinancing} onCheckedChange={setFilterFinancing} /><Label className="text-xs">Owner Fin.</Label></div>
                 <span className="text-xs text-gray-400 ml-auto">{filtered.length} results</span>

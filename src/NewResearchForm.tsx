@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,7 +7,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -133,6 +132,36 @@ export default function NewResearchForm({ onSave }: NewResearchFormProps) {
   const [showCountySuggestions, setShowCountySuggestions] = useState(false);
   const [savedId, setSavedId] = useState<string | null>(null);
   const [searchPlan, setSearchPlan] = useState<SearchPlan[]>([]);
+  const [budgetHistory, setBudgetHistory] = useState<Record<string, number[]>>({});
+  const [showBudgetDropdown, setShowBudgetDropdown] = useState<string | null>(null);
+
+  // Load budget history from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('budget_history');
+      if (stored) {
+        setBudgetHistory(JSON.parse(stored));
+      }
+    } catch (e) {
+      console.error('Failed to load budget history:', e);
+    }
+  }, []);
+
+  // Save budget value to history in localStorage
+  function saveBudgetToHistory(fieldName: string, value: number) {
+    setBudgetHistory(prev => {
+      const updated = { ...prev };
+      if (!updated[fieldName]) {
+        updated[fieldName] = [];
+      }
+      // Add if not already in history
+      if (!updated[fieldName].includes(value)) {
+        updated[fieldName] = [value, ...updated[fieldName]].slice(0, 5); // Keep last 5
+      }
+      localStorage.setItem('budget_history', JSON.stringify(updated));
+      return updated;
+    });
+  }
 
   function toggleState(state: string) {
     setForm(f => ({
@@ -216,6 +245,14 @@ export default function NewResearchForm({ onSave }: NewResearchFormProps) {
   }
 
   async function handleSave() {
+    // Save budget values to history before saving
+    saveBudgetToHistory('budgetCashMin', form.budgetCashMin);
+    saveBudgetToHistory('budgetCashMax', form.budgetCashMax);
+    saveBudgetToHistory('downPaymentMin', form.downPaymentMin);
+    saveBudgetToHistory('downPaymentMax', form.downPaymentMax);
+    saveBudgetToHistory('monthlyMin', form.monthlyMin);
+    saveBudgetToHistory('monthlyMax', form.monthlyMax);
+
     setSaving(true);
     setSaveError("");
     try {
@@ -439,50 +476,200 @@ export default function NewResearchForm({ onSave }: NewResearchFormProps) {
                 {/* Cash Budget */}
                 <div>
                   <Label className="text-xs text-gray-500">Cash Price Range</Label>
-                  <div className="mt-2 px-1">
-                    <Slider
-                      value={[form.budgetCashMin, form.budgetCashMax]}
-                      min={0}
-                      max={100000}
-                      step={1000}
-                      onValueChange={v => setForm(f => ({ ...f, budgetCashMin: v[0], budgetCashMax: v[1] }))}
-                    />
-                  </div>
-                  <div className="flex justify-between mt-1 text-xs text-gray-500">
-                    <span>{fmt(form.budgetCashMin)}</span>
-                    <span>{fmt(form.budgetCashMax)}</span>
+                  <div className="mt-2 flex gap-2">
+                    <div className="flex-1 relative">
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">$</span>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1000}
+                        value={form.budgetCashMin}
+                        onChange={e => setForm(f => ({ ...f, budgetCashMin: Math.max(0, Number(e.target.value) || 0) }))}
+                        onBlur={e => saveBudgetToHistory('budgetCashMin', Number(e.target.value) || 0)}
+                        onFocus={() => setShowBudgetDropdown('budgetCashMin')}
+                        placeholder="Min"
+                        className="w-full h-8 pl-5 pr-2 text-xs border rounded-md font-mono"
+                      />
+                      {showBudgetDropdown === 'budgetCashMin' && budgetHistory.budgetCashMin?.length > 0 && (
+                        <div className="absolute top-9 left-0 bg-white border rounded-md shadow-lg z-10 w-full">
+                          {budgetHistory.budgetCashMin.map((val, idx) => (
+                            <button
+                              key={idx}
+                              onClick={() => {
+                                setForm(f => ({ ...f, budgetCashMin: val }));
+                                setShowBudgetDropdown(null);
+                              }}
+                              className="w-full text-left px-3 py-1 text-xs hover:bg-gray-100 border-b last:border-b-0"
+                            >
+                              {fmt(val)}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <span className="flex items-center text-gray-400">–</span>
+                    <div className="flex-1 relative">
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">$</span>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1000}
+                        value={form.budgetCashMax}
+                        onChange={e => setForm(f => ({ ...f, budgetCashMax: Math.max(0, Number(e.target.value) || 0) }))}
+                        onBlur={e => saveBudgetToHistory('budgetCashMax', Number(e.target.value) || 0)}
+                        onFocus={() => setShowBudgetDropdown('budgetCashMax')}
+                        placeholder="Max"
+                        className="w-full h-8 pl-5 pr-2 text-xs border rounded-md font-mono"
+                      />
+                      {showBudgetDropdown === 'budgetCashMax' && budgetHistory.budgetCashMax?.length > 0 && (
+                        <div className="absolute top-9 left-0 bg-white border rounded-md shadow-lg z-10 w-full">
+                          {budgetHistory.budgetCashMax.map((val, idx) => (
+                            <button
+                              key={idx}
+                              onClick={() => {
+                                setForm(f => ({ ...f, budgetCashMax: val }));
+                                setShowBudgetDropdown(null);
+                              }}
+                              className="w-full text-left px-3 py-1 text-xs hover:bg-gray-100 border-b last:border-b-0"
+                            >
+                              {fmt(val)}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
                 <div>
                   <Label className="text-xs text-gray-500">Down Payment Range</Label>
-                  <div className="mt-2 px-1">
-                    <Slider
-                      value={[form.downPaymentMin, form.downPaymentMax]}
-                      min={0}
-                      max={20000}
-                      step={100}
-                      onValueChange={v => setForm(f => ({ ...f, downPaymentMin: v[0], downPaymentMax: v[1] }))}
-                    />
-                  </div>
-                  <div className="flex justify-between mt-1 text-xs text-gray-500">
-                    <span>{fmt(form.downPaymentMin)}</span>
-                    <span>{fmt(form.downPaymentMax)}</span>
+                  <div className="mt-2 flex gap-2">
+                    <div className="flex-1 relative">
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">$</span>
+                      <input
+                        type="number"
+                        min={0}
+                        step={100}
+                        value={form.downPaymentMin}
+                        onChange={e => setForm(f => ({ ...f, downPaymentMin: Math.max(0, Number(e.target.value) || 0) }))}
+                        onBlur={e => saveBudgetToHistory('downPaymentMin', Number(e.target.value) || 0)}
+                        onFocus={() => setShowBudgetDropdown('downPaymentMin')}
+                        placeholder="Min"
+                        className="w-full h-8 pl-5 pr-2 text-xs border rounded-md font-mono"
+                      />
+                      {showBudgetDropdown === 'downPaymentMin' && budgetHistory.downPaymentMin?.length > 0 && (
+                        <div className="absolute top-9 left-0 bg-white border rounded-md shadow-lg z-10 w-full">
+                          {budgetHistory.downPaymentMin.map((val, idx) => (
+                            <button
+                              key={idx}
+                              onClick={() => {
+                                setForm(f => ({ ...f, downPaymentMin: val }));
+                                setShowBudgetDropdown(null);
+                              }}
+                              className="w-full text-left px-3 py-1 text-xs hover:bg-gray-100 border-b last:border-b-0"
+                            >
+                              {fmt(val)}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <span className="flex items-center text-gray-400">–</span>
+                    <div className="flex-1 relative">
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">$</span>
+                      <input
+                        type="number"
+                        min={0}
+                        step={100}
+                        value={form.downPaymentMax}
+                        onChange={e => setForm(f => ({ ...f, downPaymentMax: Math.max(0, Number(e.target.value) || 0) }))}
+                        onBlur={e => saveBudgetToHistory('downPaymentMax', Number(e.target.value) || 0)}
+                        onFocus={() => setShowBudgetDropdown('downPaymentMax')}
+                        placeholder="Max"
+                        className="w-full h-8 pl-5 pr-2 text-xs border rounded-md font-mono"
+                      />
+                      {showBudgetDropdown === 'downPaymentMax' && budgetHistory.downPaymentMax?.length > 0 && (
+                        <div className="absolute top-9 left-0 bg-white border rounded-md shadow-lg z-10 w-full">
+                          {budgetHistory.downPaymentMax.map((val, idx) => (
+                            <button
+                              key={idx}
+                              onClick={() => {
+                                setForm(f => ({ ...f, downPaymentMax: val }));
+                                setShowBudgetDropdown(null);
+                              }}
+                              className="w-full text-left px-3 py-1 text-xs hover:bg-gray-100 border-b last:border-b-0"
+                            >
+                              {fmt(val)}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
                 <div>
                   <Label className="text-xs text-gray-500">Monthly Payment Range</Label>
-                  <div className="mt-2 px-1">
-                    <Slider
-                      value={[form.monthlyMin, form.monthlyMax]}
-                      min={0}
-                      max={2000}
-                      step={25}
-                      onValueChange={v => setForm(f => ({ ...f, monthlyMin: v[0], monthlyMax: v[1] }))}
-                    />
-                  </div>
-                  <div className="flex justify-between mt-1 text-xs text-gray-500">
-                    <span>{fmt(form.monthlyMin)}</span>
-                    <span>{fmt(form.monthlyMax)}</span>
+                  <div className="mt-2 flex gap-2">
+                    <div className="flex-1 relative">
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">$</span>
+                      <input
+                        type="number"
+                        min={0}
+                        step={25}
+                        value={form.monthlyMin}
+                        onChange={e => setForm(f => ({ ...f, monthlyMin: Math.max(0, Number(e.target.value) || 0) }))}
+                        onBlur={e => saveBudgetToHistory('monthlyMin', Number(e.target.value) || 0)}
+                        onFocus={() => setShowBudgetDropdown('monthlyMin')}
+                        placeholder="Min"
+                        className="w-full h-8 pl-5 pr-2 text-xs border rounded-md font-mono"
+                      />
+                      {showBudgetDropdown === 'monthlyMin' && budgetHistory.monthlyMin?.length > 0 && (
+                        <div className="absolute top-9 left-0 bg-white border rounded-md shadow-lg z-10 w-full">
+                          {budgetHistory.monthlyMin.map((val, idx) => (
+                            <button
+                              key={idx}
+                              onClick={() => {
+                                setForm(f => ({ ...f, monthlyMin: val }));
+                                setShowBudgetDropdown(null);
+                              }}
+                              className="w-full text-left px-3 py-1 text-xs hover:bg-gray-100 border-b last:border-b-0"
+                            >
+                              {fmt(val)}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <span className="flex items-center text-gray-400">–</span>
+                    <div className="flex-1 relative">
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">$</span>
+                      <input
+                        type="number"
+                        min={0}
+                        step={25}
+                        value={form.monthlyMax}
+                        onChange={e => setForm(f => ({ ...f, monthlyMax: Math.max(0, Number(e.target.value) || 0) }))}
+                        onBlur={e => saveBudgetToHistory('monthlyMax', Number(e.target.value) || 0)}
+                        onFocus={() => setShowBudgetDropdown('monthlyMax')}
+                        placeholder="Max"
+                        className="w-full h-8 pl-5 pr-2 text-xs border rounded-md font-mono"
+                      />
+                      {showBudgetDropdown === 'monthlyMax' && budgetHistory.monthlyMax?.length > 0 && (
+                        <div className="absolute top-9 left-0 bg-white border rounded-md shadow-lg z-10 w-full">
+                          {budgetHistory.monthlyMax.map((val, idx) => (
+                            <button
+                              key={idx}
+                              onClick={() => {
+                                setForm(f => ({ ...f, monthlyMax: val }));
+                                setShowBudgetDropdown(null);
+                              }}
+                              className="w-full text-left px-3 py-1 text-xs hover:bg-gray-100 border-b last:border-b-0"
+                            >
+                              {fmt(val)}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
