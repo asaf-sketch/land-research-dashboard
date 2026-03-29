@@ -74,7 +74,7 @@ if (storedVersion !== CACHE_VERSION) {
   console.log('[AADreamland] Cache cleared — old research data with broken URLs removed.');
 }
 
-// API configuration - change this when backend is deployed
+// API configuration — set via Search Engines tab, or defaults to Docker server on same machine
 const API_BASE_URL = localStorage.getItem('api_url') || 'https://land-scraper-api.onrender.com';
 
 // Check if a listing URL points to a SPECIFIC property page (not a general search/seller page)
